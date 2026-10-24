@@ -146,8 +146,8 @@ New harnesses plug in as one module each (see [the source guide](https://github.
 <sub>Synthetic data: invented sessions, projects and activity.</sub>
 
 Click a row to open it in place; `/` finds, `j`/`k` move between top-level agents, `Esc` closes, `a` / `w`
-/ `e` switch between active, needs-you and all, and `r` lets the open session's
-turn rest. Click a table heading to sort by
+/ `e` switch between active, needs-you and all, `r` lets the open session's
+turn rest, and `o` brings the focused session's window forward. Click a table heading to sort by
 that column, click again to reverse it, and a third time to restore the default
 attention order. Except for STATUS, sorting orders within groups: busy and needs-you agents
 stay above ones at rest, and those above history. Open idle sessions always stay at the bottom.
@@ -235,9 +235,16 @@ brought forward. A Grok Bot agent runs in the cloud, so it has no local process;
 it opens directly in the Grok Bot app with the app's own agent link. On Linux,
 tmux panes and `wmctrl` windows are supported.
 
-The button only brings a window forward. It never types into, signals or
-controls an agent. The first iTerm2 or Terminal use can trigger a macOS
-automation prompt. For a closed session it offers a resume command, such as
+Pointing at a row whose session is still open shows a small ↗ just before its
+name: click it, or press `o` on the focused row, to bring the window forward
+without opening the row. Spiritboard looks the window up the first time you
+point at or focus a row, so rows you never touch cost nothing, and rows never
+name the app. Narrow windows leave the ↗ out; `o` and the opened row's button
+still work.
+
+The ↗ and the button only bring a window forward. They never type into, signal
+or control an agent. The first iTerm2 or Terminal use can trigger a macOS
+automation prompt. For a closed session the button offers a resume command, such as
 `claude --resume <id>` with the profile's `CLAUDE_CONFIG_DIR`, for you to copy
 and run; Spiritboard never runs it, and never offers it while the session might
 still be running elsewhere. DeepSeek Harness sessions offer no resume command. A

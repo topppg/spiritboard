@@ -14,7 +14,7 @@
   const REST_KEY = "spiritboard.rested";
   const WIDTH_KEY = "spiritboard.columns";
   const KIND_NAMES = { codex: "Codex", claude: "Claude", opencode: "opencode", pi: "Pi", dsh: "DeepSeek Harness", grokbot: "Grok Bot" };
-  const state = { snapshot: null, selected: null, view: "active", sort: null, descending: false, order: [], frozen: new Map(), split: 0, colors: new Map(), events: [], nextCursor: 0, more: false, eventBusy: false, request: 0, fetching: false, live: false, lastSnapshotAt: 0, fingerprint: null, historyOpen: false, tableKey: "", target: null, targetNote: "", targetFallback: false, latest: null, past: null, pastRequest: 0, zoom: 600, chart: null, chartAt: 0, rested: loadRested(), editing: null, draft: "", folds: new Map() };
+  const state = { snapshot: null, selected: null, view: "active", sort: null, descending: false, order: [], frozen: new Map(), split: 0, colors: new Map(), events: [], nextCursor: 0, more: false, eventBusy: false, request: 0, fetching: false, live: false, lastSnapshotAt: 0, fingerprint: null, historyOpen: false, tableKey: "", target: null, targetNote: "", targetFallback: false, latest: null, past: null, pastRequest: 0, zoom: 600, chart: null, chartAt: 0, rested: loadRested(), editing: null, draft: "", folds: new Map(), openTargets: new Map(), openFlash: null };
   // Chart windows in seconds: heading, then the left and middle axis labels.
   const ZOOMS = { 600: ["last 10 minutes", "-10m", "-5m"], 3600: ["last hour", "-1h", "-30m"], 86400: ["last 24 hours", "-24h", "-12h"],
     604800: ["last 7 days", "-7d", "-3.5d"], 2592000: ["last 30 days", "-30d", "-15d"] };
@@ -586,6 +586,12 @@
     const last = node("span", seenText(run.last_seen), "cell seen");
     last.dataset.seen = run.last_seen || "";
     button.append(statusCell, agent, doingCell, rateCell, last);
+    // A session that closed is asked again if it comes back, perhaps in another app.
+    if (!mayOpen(run)) state.openTargets.delete(run.run_id);
+    const label = state.openTargets.get(run.run_id);
+    if (label) addOpenMark(button, run.run_id, label);
+    button.addEventListener("pointerenter", () => lookUpOpen(run));
+    button.addEventListener("focus", () => lookUpOpen(run));
     button.addEventListener("click", () => selectRun(state.selected === run.run_id ? null : run.run_id));
     return button;
   }
@@ -820,12 +826,14 @@
     if (state.past) items.forEach((item) => { if (item.tagName === "button" || item.tagName === "BUTTON") { item.disabled = true; item.title = "Back to live to open or resume"; } });
     return items;
   }
+  // Null when the session cannot be opened; undefined when the server could not answer.
   async function fetchTarget(id) {
     try {
       const response = await fetch(`/api/runs/${encodeURIComponent(id)}/focus`, { cache: "no-store" });
-      if (response.ok) { const data = await response.json(); if (data?.available) return { ...data, runId: id }; }
-    } catch (_) { return null; }
-    return null;
+      if (!response.ok) return undefined;
+      const data = await response.json();
+      return data?.available ? { ...data, runId: id } : null;
+    } catch (_) { return undefined; }
   }
   async function loadTarget(id) {
     const target = await fetchTarget(id);
@@ -836,8 +844,50 @@
     if (state.past) return;
     let ok = false;
     try { ok = (await fetch(`/api/runs/${encodeURIComponent(id)}/focus`, { method: "POST", cache: "no-store", headers: { "X-Spiritboard": "focus" } })).ok; } catch (_) { ok = false; }
+    // The result lives in state, so a live redraw of the table keeps showing it.
+    const flash = { id, ok };
+    state.openFlash = flash; paintOpenMarks(id);
+    setTimeout(() => {
+      if (state.openFlash !== flash) return;
+      // A session that moved or closed is asked again the next time its row is pointed at.
+      if (!ok) state.openTargets.delete(id);
+      state.openFlash = null; paintOpenMarks(id);
+    }, ok ? 1500 : 2500);
     if (id !== state.selected) return;
     state.targetNote = ok ? "opened" : "could not open"; renderDetail();
+  }
+  function paintOpenMarks(id) { [...$("runs").querySelectorAll("[data-open-run]")].filter((mark) => mark.dataset.openRun === id).forEach(paintOpenMark); }
+  function paintOpenMark(mark) {
+    const flash = state.openFlash?.id === mark.dataset.openRun ? state.openFlash : null;
+    mark.textContent = !flash ? "↗" : flash.ok ? "✓" : "could not open";
+    mark.className = !flash ? "row-open" : flash.ok ? "row-open shown" : "row-open shown failed";
+  }
+  // Only a native session that is still open can raise its window; the server re-checks on every open.
+  function mayOpen(run) { return !state.past && run.mode === "observation" && run.live !== false && !terminal.has(run.state); }
+  // Asked once per session, the first time its row is pointed at or focused, so rows never name apps.
+  async function lookUpOpen(run) {
+    const id = run.run_id;
+    if (state.openTargets.has(id) || !mayOpen(run)) return;
+    state.openTargets.set(id, "");
+    const target = await fetchTarget(id);
+    if (target === undefined) { state.openTargets.delete(id); return; }
+    const label = target?.kind === "focus" ? target.label : "";
+    state.openTargets.set(id, label);
+    const button = [...$("runs").querySelectorAll("[data-focus-key]")].find((el) => el.dataset.focusKey === `select:${id}`);
+    if (label && button && !button.dataset.openable) addOpenMark(button, id, label);
+  }
+  function addOpenMark(button, id, label) {
+    const mark = node("span", "↗", "row-open"); mark.title = `Open in ${label} · o`; mark.dataset.openRun = id;
+    mark.setAttribute("aria-hidden", "true");
+    mark.addEventListener("click", (event) => { event?.stopPropagation?.(); openApp(id); });
+    button.dataset.openable = "true"; button.setAttribute("aria-keyshortcuts", "o");
+    paintOpenMark(mark); button.append(mark);
+  }
+  // The focused row, else the opened one, raises its window like the row's ↗.
+  function openFocused() {
+    const id = document.activeElement?.dataset?.runId || state.selected;
+    const run = id && state.snapshot?.runs.find((r) => r.run_id === id);
+    if (run && mayOpen(run)) openApp(id);
   }
   async function copyCommand(id) {
     if (state.past) return;
@@ -1016,7 +1066,7 @@
     }
     if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
     const actions = { "/": () => $("search").focus(), j: () => move(1), ArrowDown: () => move(1), k: () => move(-1), ArrowUp: () => move(-1),
-      a: () => setView("active"), w: () => setView("waiting"), e: () => setView("all"), v: () => $("overview").classList.toggle("collapsed"), l: backToLive, L: backToLive, r: restSelected, s: foldSelected,
+      a: () => setView("active"), w: () => setView("waiting"), e: () => setView("all"), v: () => $("overview").classList.toggle("collapsed"), l: backToLive, L: backToLive, r: restSelected, s: foldSelected, o: openFocused,
       "?": () => foldKeys($("keys-toggle").getAttribute("aria-expanded") !== "true") };
     if (actions[event.key]) { event.preventDefault(); actions[event.key](); }
   });

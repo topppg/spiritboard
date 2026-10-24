@@ -121,7 +121,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 32px; display: flex; fle
 .resize::after { content: ""; position: absolute; top: 7px; bottom: 7px; left: 3px; width: 2px; border-radius: 1px; background: transparent; }
 .row.head:hover .resize::after { background: var(--line); }
 .resize:hover::after, .resize:focus-visible::after, .resize.dragging::after { background: var(--run) !important; }
-.run-row { width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; min-height: 0; }
+.run-row { position: relative; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; min-height: 0; }
 .run-row:hover { background: #ffffff06; }
 .run-row.selected { background: var(--detail); box-shadow: inset 2px 0 0 var(--run); }
 /* Needs-you rows keep a thin amber edge; their text stays readable white. */
@@ -138,6 +138,11 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 32px; display: flex; fle
 .run-row.sub .agent { padding-left: calc(var(--depth, 1) * 14px); }
 .run-row.sub .agent-name { font-weight: 400; color: var(--soft); }
 .cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* The jump to a session's window waits, out of sight, just before the session name. */
+.row-open { position: absolute; top: 0; bottom: 0; left: calc(var(--status-w, 132px) + 6px); margin: auto 0; height: 24px; min-width: 24px; padding: 0 5px; display: grid; place-items: center; border-radius: var(--r-sm); color: var(--muted); opacity: 0; cursor: pointer; }
+.run-row:hover .row-open, .run-row:focus-visible .row-open, .row-open.shown { opacity: 1; }
+.row-open:hover { color: var(--bright); background: #ffffff14; }
+.row-open.failed { background: var(--table); font-size: var(--fs-xs); white-space: nowrap; }
 .status { font-weight: 500; color: var(--soft); }
 .status.g-needs { color: var(--wait); }
 .status.g-failed { color: var(--err); }
@@ -234,6 +239,7 @@ kbd { font-family: var(--mono); font-size: var(--fs-xs); background: #1a1528; bo
   .run-row .doing { grid-area: doing; font-size: 13.5px; }
   .run-row .rate-cell { grid-area: rate; }
   .run-row .seen { grid-area: seen; min-width: 28px; text-align: right; }
+  .row-open { display: none; }
   .run-row.sub .agent { padding-left: 0; }
   .run-row.sub .doing { padding-left: calc(var(--depth, 1) * 14px); }
   .group-row, .expansion { padding-left: 18px; }

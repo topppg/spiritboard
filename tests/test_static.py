@@ -85,6 +85,13 @@ class StaticTests(unittest.TestCase):
         shift = re.search(r"margin-left: -(\d+)px", rule).group(1)
         self.assertIn(f"max-width: calc(100% + {shift}px)", rule)
 
+    def test_row_open_mark_waits_for_a_pointer_or_focus_and_skips_narrow_rows(self):
+        css = (STATIC / "style.css").read_text()
+        self.assertRegex(css, r"\.row-open \{[^}]*opacity: 0;")
+        self.assertIn(".run-row:hover .row-open, .run-row:focus-visible .row-open", css)
+        narrow = css[css.index("@container (max-width: 880px)") :]
+        self.assertIn(".row-open { display: none; }", narrow)
+
     @unittest.skipUnless(shutil.which("node"), "Node is optional; browser syntax/DOM check skipped")
     def test_browser_renders_table_harnesses_and_private_text_safely(self):
         script = r"""
@@ -120,11 +127,11 @@ const localStorage = {getItem: k => stored[k] ?? null, setItem: (k, v) => { stor
 document = { getElementById: id => ids[id], createElement: tag => new Element(tag), querySelectorAll: selector => selector === '[data-sort]' ? Object.values(headers) : selector === '[data-resize]' ? resizers : [], activeElement: null, addEventListener: (k, fn) => { docListeners[k] = fn; } };
 const now = new Date().toISOString();
 const old = '2020-01-01T00:00:00Z';
-const run = (id, parent, name, extra = {}) => ({run_id:id,parent_run_id:parent,name,session_id:'codex-work:observed',source:'codex',account:'work',state:'working',health:'observed',inferred:true,task:'Original task',activity:'<img src=x onerror=alert(1)>',last_seen:now,started_at:now,demo:true,operations:[],...extra});
+const run = (id, parent, name, extra = {}) => ({run_id:id,parent_run_id:parent,name,mode:'observation',session_id:'codex-work:observed',source:'codex',account:'work',state:'working',health:'observed',inferred:true,task:'Original task',activity:'<img src=x onerror=alert(1)>',last_seen:now,started_at:now,demo:true,operations:[],...extra});
 const runs = [run('child','root','Child'), run('root',null,'Root'), run('ask','root','Asker',{state:'waiting_user',ai_summary:{text:'Tuning retry limits',title:'Retry tuning',origin:'claude-recap',stale:false}}),
   run('orphan','missing','Orphan',{session_id:'claude-personal:observed',source:'claude',account:'personal'}),
   run('done',null,'Finished',{state:'completed',summary:'All good',health:'unknown'}), run('ancient',null,'Ancient',{last_seen:old,health:'stale'}),
-  {...run('sdk-run',null,'SDK worker'),session_id:'s1',source:'sdk',account:'demo',inferred:false,health:'fresh'}];
+  {...run('sdk-run',null,'SDK worker'),mode:'sdk',session_id:'s1',source:'sdk',account:'demo',inferred:false,health:'fresh'}];
 const snapshot = { stream_id:'journal-a', cursor:1, runs, server_time:now, stale_after_seconds:15,
   profiles:[{id:'codex-work',kind:'codex',label:'work'},{id:'claude-personal',kind:'claude',label:'personal'},{id:'codex-empty',kind:'codex',label:'Empty profile'},{id:'grokbot-mac',kind:'grokbot',label:'Grok Bot'},{id:'dsh-home',kind:'dsh',label:'DeepSeek Harness'}],
   source_errors:{unavailable:'Source unavailable'}, ai:{enabled:true,status:'ready',calls:2,actual_cost_usd:.0021,known_cost_usd:.0021,unknown_cost_calls:0,summaries:[]},
@@ -135,17 +142,20 @@ let stream;
 class EventSource { constructor() { this.listeners = {}; stream = this; } addEventListener(name, fn) { this.listeners[name] = fn; } }
 class Option extends Element { constructor(text,value) { super('option'); this.textContent = text; this.value = value; } }
 const requests = [], posts = [], copied = [];
-let renameStatus = 200;
+let renameStatus = 200, focusStatus = 200;
 const targets = {orphan:{available:true,kind:'focus',label:'cmux'}, ask:{available:true,kind:'resume',label:'resume',command:'claude --resume invented-0000'}};
 const navigator = {clipboard:{writeText:async text => { copied.push(text); }}};
-const context = {document,localStorage,Option,EventSource,navigator,setInterval:() => {},console,fetch:async (url, options = {}) => {
+const timers = [];
+const context = {document,localStorage,Option,EventSource,navigator,setInterval:() => {},setTimeout:(fn) => timers.push(fn),console,fetch:async (url, options = {}) => {
   if (options.method === 'POST') {
     posts.push(options.body ? {url, headers:options.headers, body:JSON.parse(options.body)} : {url, headers:options.headers});
+    if (url.endsWith('/focus') && focusStatus !== 200) return {ok:false,status:focusStatus};
     if (url.endsWith('/name')) return renameStatus === 200 ? {ok:true,json:async()=>({ok:true,local_name:JSON.parse(options.body).name.trim() || null})} : {ok:false,status:renameStatus};
     return {ok:true,json:async()=>({ok:true})};
   }
   requests.push(url);
   if (url.endsWith('/focus')) {
+    if (focusStatus !== 200) return {ok:false,status:focusStatus};
     return {ok:true,json:async()=>targets[decodeURIComponent(url.split('/')[3])] || {available:false,kind:'unsupported',label:''}};
   }
   if (url.startsWith('/api/snapshot?at=')) return {ok:true,json:async()=>past};
@@ -202,6 +212,63 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  assert.equal(dots.length, 20);
  assert.ok(dots.every(d => parseFloat(d.style.left) >= 80));
  assert.equal(ids['flux-note'].textContent, 'events/min · dots = latest events');
+ // An open session asks once, on first point or focus, and then shows ↗ before its name.
+ const rowOf = (id) => rows().find(r => r.dataset.runId === id);
+ const markOf = (id) => flatten(rowOf(id)).find(x => (x.className || '').startsWith('row-open'));
+ const focusAsks = (id) => requests.filter(x => x === `/api/runs/${id}/focus`).length;
+ assert.ok(!flatten(ids.runs).some(x => (x.className || '').startsWith('row-open')));
+ targets.root = {available:true,kind:'focus',label:'Ghostty'};
+ rowOf('root').listeners.pointerenter(); await tick();
+ assert.equal(markOf('root').title, 'Open in Ghostty · o');
+ assert.equal(markOf('root').attrs['aria-hidden'], 'true');
+ assert.equal(rowOf('root').attrs['aria-keyshortcuts'], 'o');
+ rowOf('root').listeners.focus(); await tick();
+ assert.equal(focusAsks('root'), 1);
+ // Its click raises the window without opening the row, and the ✓ survives a live redraw.
+ let stopped = false;
+ markOf('root').listeners.click({stopPropagation() { stopped = true; }}); await tick();
+ assert.ok(stopped);
+ assert.deepEqual(posts, [{url:'/api/runs/root/focus', headers:{'X-Spiritboard':'focus'}}]);
+ assert.equal(rowOf('root').attrs['aria-expanded'], 'false');
+ assert.equal(markOf('root').textContent, '✓');
+ stream.listeners.snapshot({data:JSON.stringify({...snapshot, runs:runs.map(r => r.run_id === 'root' ? {...r, activity:'Redrawn'} : r)})});
+ assert.equal(markOf('root').textContent, '✓');
+ timers.splice(0).forEach(fn => fn());
+ assert.equal(markOf('root').textContent, '↗');
+ stream.listeners.snapshot({data:JSON.stringify(snapshot)});
+ // A failed open says so, then the session is asked about again.
+ focusStatus = 409;
+ markOf('root').listeners.click({stopPropagation() {}}); await tick();
+ assert.equal(markOf('root').textContent, 'could not open');
+ timers.splice(0).forEach(fn => fn());
+ focusStatus = 200;
+ rowOf('root').listeners.pointerenter(); await tick();
+ assert.equal(focusAsks('root'), 2);
+ // o raises the focused row's window the same way.
+ rowOf('root').focus(); posts.splice(0);
+ docListeners.keydown({key:'o', target:rowOf('root'), preventDefault() {}}); await tick();
+ assert.deepEqual(posts, [{url:'/api/runs/root/focus', headers:{'X-Spiritboard':'focus'}}]);
+ timers.splice(0).forEach(fn => fn()); posts.splice(0);
+ // SDK runs and closed sessions never ask; a session the server cannot open shows nothing.
+ rowOf('sdk-run').listeners.pointerenter(); await tick();
+ assert.equal(focusAsks('sdk-run'), 0);
+ rowOf('child').listeners.pointerenter(); await tick();
+ assert.equal(focusAsks('child'), 1);
+ assert.equal(markOf('child'), undefined);
+ stream.listeners.snapshot({data:JSON.stringify({...snapshot, runs:[...runs, run('shut', null, 'Shut', {state:'idle', live:false}), run('later', null, 'Later')]})});
+ rowOf('shut').listeners.pointerenter(); await tick();
+ assert.equal(focusAsks('shut'), 0);
+ // A server that could not answer is asked again on the next point.
+ targets.later = {available:true,kind:'focus',label:'iTerm'};
+ focusStatus = 503;
+ rowOf('later').listeners.pointerenter(); await tick();
+ assert.equal(markOf('later'), undefined);
+ focusStatus = 200;
+ rowOf('later').listeners.pointerenter(); await tick();
+ assert.equal(markOf('later').title, 'Open in iTerm · o');
+ delete targets.later;
+ stream.listeners.snapshot({data:JSON.stringify(snapshot)});
+ delete targets.root;
  assert.ok(ids.flux.attrs['aria-label'].includes('Codex · work'));
  // Spend stays in the tooltip; the header only says summaries are on.
  assert.equal(ids['ai-status'].textContent, 'Summaries');
@@ -587,6 +654,9 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  assert.deepEqual(rows().map(r => r.dataset.runId), ['orphan']);
  assert.ok(rows()[0].textContent.includes('Earlier step'));
  assert.equal(control('open-app').disabled, true);
+ // The past board never offers to open what is running now.
+ rows()[0].listeners.pointerenter(); await tick();
+ assert.ok(!flatten(rows()[0]).some(x => (x.className || '').startsWith('row-open')));
  assert.ok(ids.flux.children.some(x => x.className === 'marker'));
  // The past board still lists every harness the live chart draws.
  assert.ok(ids.harnesses.children.some(x => x.tagName === 'button' && x.textContent.includes('Codex · work')));
