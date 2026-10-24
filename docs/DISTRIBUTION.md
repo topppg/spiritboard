@@ -65,8 +65,8 @@ The [macOS app guide](MAC_APP.md) covers the standalone window and Dock app. Wit
 credentials below configured, a release run with **mac** checked builds signed and notarized Apple
 Silicon and Intel DMGs and attaches them to the matching GitHub Release. Until then, unchecking
 **mac** releases the Python package alone. The Python package
-continues to install through `uvx spiritboard`. There is no public Mac DMG yet; the existing
-`0.1.0` release predates this workflow. An unsigned local DMG is only for testing.
+continues to install through `uvx spiritboard`. There is no public Mac DMG yet: `0.1.0` predates
+this workflow, and a release run with **mac** unchecked carries none. An unsigned local DMG is only for testing.
 
 ## Python package and Mac release
 

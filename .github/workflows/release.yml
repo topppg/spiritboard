@@ -200,8 +200,11 @@ jobs:
           RELEASE_SHA: ${{ github.sha }}
           RELEASE_MAC: ${{ inputs.mac }}
         run: |
-          mac=(--mac-dist mac-dist)
-          if [ "$RELEASE_MAC" != true ]; then mac=(--without-mac); fi
+          case "$RELEASE_MAC" in
+            true) mac=(--mac-dist mac-dist) ;;
+            false) mac=(--without-mac) ;;
+            *) echo "Unexpected mac input: $RELEASE_MAC" >&2; exit 1 ;;
+          esac
           uv run --no-project --no-config python scripts/paired_release.py preflight \
             --repository "$RELEASE_REPOSITORY" --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" \
             "${mac[@]}"
@@ -247,8 +250,11 @@ jobs:
           RELEASE_SHA: ${{ github.sha }}
           RELEASE_MAC: ${{ inputs.mac }}
         run: |
-          mac=(--mac-dist mac-dist)
-          if [ "$RELEASE_MAC" != true ]; then mac=(--without-mac); fi
+          case "$RELEASE_MAC" in
+            true) mac=(--mac-dist mac-dist) ;;
+            false) mac=(--without-mac) ;;
+            *) echo "Unexpected mac input: $RELEASE_MAC" >&2; exit 1 ;;
+          esac
           uv run --no-project --no-config python scripts/paired_release.py pair \
             --repository "$RELEASE_REPOSITORY" --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" \
             "${mac[@]}"
