@@ -360,7 +360,7 @@
     const host = $("flux"); host.replaceChildren();
     const data = chartData(); const count = data.buckets || 60; const bucket = data.bucket_seconds || 10; const scale = 60 / bucket;
     const windowText = ZOOMS[state.zoom][0];
-    $("flux-note").textContent = bucket <= 60 ? "events/min" : `events per ${span(bucket)}`;
+    $("flux-note").textContent = `${bucket <= 60 ? "events/min" : `events per ${span(bucket)}`} · dots = latest events`;
     const byHarness = list.map((h) => {
       const series = new Array(count).fill(0);
       h.runs.forEach((run) => (data.runs?.[run.run_id] || []).forEach((v, i) => { series[i] += v; }));
@@ -383,6 +383,23 @@
       col.addEventListener("click", () => travel(i, data));
       host.append(col);
     });
+    // Deterministic spray per absolute bucket so dots stay put as time advances.
+    const endBucket = Math.floor((time(data.end) || liveNow()) / 1000 / bucket);
+    const noise = (n) => { const x = Math.sin(n * 12.9898) * 43758.5453; return x - Math.floor(x); };
+    for (let i = Math.max(0, count - 12); i < count; i++) {
+      const top = byHarness.reduce((best, h) => h.series[i] > (best?.series[i] || 0) ? h : best, null);
+      const dots = Math.min(15, Math.ceil(totals[i] / 2));
+      for (let j = 0; j < dots; j++) {
+        const seed = (endBucket - (count - 1 - i)) * 31 + j;
+        const dot = node("span", null, "dot"); const size = 1.5 + noise(seed + .3) * 3;
+        dot.style.left = `${(i + noise(seed)) / count * 100}%`;
+        dot.style.bottom = `max(0px, calc(${totals[i] * unit}% + ${(noise(seed + .7) - .3) * 36}px))`;
+        dot.style.width = dot.style.height = `${size}px`;
+        dot.style.background = noise(seed + .9) > .3 && top ? state.colors.get(top.key) : "#e6e9ef";
+        dot.style.opacity = String(.4 + noise(seed + .5) * .6);
+        host.append(dot);
+      }
+    }
     if (state.past) {
       const start = (time(data.end) || liveNow()) - count * bucket * 1000;
       const x = (state.past.at - start) / (count * bucket * 1000);
