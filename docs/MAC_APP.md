@@ -15,9 +15,10 @@ port cannot impersonate Spiritboard. If no dashboard is running for the chosen f
 says so and offers to try again, choose another folder, or use the default; it never starts a
 server there or shows other data instead. **File › Use Default Data Folder** returns to normal.
 
-The app opens dashboard dropdowns as a compact Mac-style menu instead of WebKit's legacy popup.
-It brings this menu itself (`src/app/select-menu.js`), so it also works with an older dashboard.
-Everything else uses the dashboard's own layout, so the window looks like the browser at every size.
+Dashboard dropdowns open as a compact Mac-style menu instead of WebKit's legacy popup. The
+dashboard ships this menu (`src/spiritboard/static/select-menu.js`) for every browser, and the app
+injects its own copy too, so an older dashboard gets it as well; only one copy installs. Everything
+else uses the dashboard's own layout, so the window looks like the browser at every size.
 
 ## Updates
 
