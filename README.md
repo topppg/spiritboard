@@ -14,7 +14,7 @@ waiting for you or gone, and a button that takes you straight to it.
 It only reads what the agents already write to disk. It never starts, steers or
 stops an agent, and nothing leaves your machine unless you turn on summaries.
 
-![Spiritboard showing sixteen agents across Claude Code, Codex, opencode and Pi](https://raw.githubusercontent.com/topppg/spiritboard/062a77d179c2fadc1402a0a91f3ff8bb444ab7f7/docs/dashboard.png)
+![Spiritboard showing sixteen agents across Claude Code, Codex, opencode and Pi](https://raw.githubusercontent.com/topppg/spiritboard/d951c5338d8f996102dffeff99da1e995bc50852/docs/dashboard.png)
 
 <sub>Synthetic data: invented sessions, projects and activity.</sub>
 
