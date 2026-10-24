@@ -91,7 +91,9 @@
     try { localStorage.setItem(REST_KEY, JSON.stringify(Object.fromEntries(state.rested))); } catch (_) { /* rest marks are a convenience */ }
     render();
   }
-  function statusOf(run) {
+  let statuses = new Map();
+  function statusOf(run) { return statuses.get(run.run_id) || ownStatusOf(run); }
+  function ownStatusOf(run) {
     if (run.state === "completed") return { key: "done", glyph: "✓", text: "done" };
     if (run.state === "failed") return { key: "failed", glyph: "✗", text: "failed" };
     if (run.state === "cancelled") return { key: "done", glyph: "–", text: "cancelled" };
@@ -112,6 +114,24 @@
     if (run.state === "idle") return { key: "idle", glyph: "◌", text: "idle" };
     if (run.state === "unknown") return { key: "unknown", glyph: "?", text: "unknown" };
     return { key: "running", glyph: "●", text: "running" };
+  }
+  function updateStatuses() {
+    const runs = state.snapshot.runs;
+    const byId = new Map(runs.map((run) => [run.run_id, run]));
+    statuses = new Map(runs.map((run) => [run.run_id, ownStatusOf(run)]));
+    const running = runs.filter((run) => statuses.get(run.run_id).key === "running");
+    // Use the full displayed tree, so filters and folded children cannot hide ongoing work.
+    for (const run of running) {
+      const seen = new Set([run.run_id]);
+      for (let parent = byId.get(run.parent_run_id); parent && !seen.has(parent.run_id); parent = byId.get(parent.parent_run_id)) {
+        seen.add(parent.run_id);
+        const status = statuses.get(parent.run_id);
+        if (status.key === "running") break;
+        if (!["done", "failed", "closed"].includes(status.key) && (status.key !== "needs" || status.turn)) {
+          statuses.set(parent.run_id, { key: "running", glyph: "●", text: "running", child: true });
+        }
+      }
+    }
   }
   function doingOf(run, status) {
     if (terminal.has(run.state)) return { text: run.summary || run.activity || run.task || "finished", cls: "" };
@@ -204,6 +224,7 @@
   }
   function render() {
     if (!state.snapshot) return;
+    updateStatuses();
     // The chart always shows the live journal; colours follow its harnesses.
     const current = harnesses(state.latest.runs);
     const list = state.past ? harnesses(state.snapshot.runs, false) : current;
@@ -546,7 +567,8 @@
     button.setAttribute("aria-expanded", String(open));
     const statusCell = node("span", null, `cell status g-${status.key}`);
     statusCell.append(node("span", status.glyph, "glyph"), ` ${status.text}`);
-    if (run.inferred) statusCell.title = "Inferred from the transcript";
+    if (status.child) statusCell.title = "A subagent is running";
+    else if (run.inferred) statusCell.title = "Inferred from the transcript";
     const agent = node("span", null, "cell agent");
     const harness = harnessOf(run);
     // The harness lives in tooltips, the accessible name and the opened panel; rows carry status colour only.

@@ -808,6 +808,71 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  stream.listeners.snapshot({data:JSON.stringify({...snapshot, runs:runs.map(r => r.run_id === 'sdk-run' ? {...r, live:false} : r)})}); await tick();
  assert.ok(sdkButton() && !sdkButton().textContent.includes('idle'));
  stream.listeners.snapshot({data:JSON.stringify(snapshot)}); await tick();
+ // A running descendant keeps its main agent running, even between the main agent's turns.
+ const delegator = run('delegator', null, 'Delegator', {state:'idle', live:true});
+ const worker = run('worker', 'delegator', 'Worker');
+ const delegation = (agents) => stream.listeners.snapshot({data:JSON.stringify({...snapshot, runs:agents})});
+ const statusText = (id) => flatten(rowOf(id)).find(x => (x.className || '').startsWith('cell status')).textContent;
+ delegation([delegator, worker]);
+ assert.equal(statusText('delegator'), '● running');
+ assert.ok(ids.counts.textContent.includes('2 running') && !ids.counts.textContent.includes('need'));
+ assert.ok(ids.harnesses.textContent.includes('2 running') && !ids.harnesses.textContent.includes('need'));
+ ids.search.value = 'Delegator'; ids.search.listeners.input();
+ assert.deepEqual(rows().map(r => r.dataset.runId), ['delegator']);
+ assert.equal(statusText('delegator'), '● running');
+ ids.search.value = ''; ids.search.listeners.input();
+ docListeners.keydown({key:'w', target:{tagName:'BODY'}, preventDefault(){}});
+ assert.equal(rows().length, 0);
+ docListeners.keydown({key:'a', target:{tagName:'BODY'}, preventDefault(){}});
+ // When the worker settles or disappears, the main agent's own turn/rest status returns.
+ delegation([delegator, {...worker, state:'idle'}]);
+ assert.equal(statusText('delegator'), '◐ your turn');
+ rowOf('delegator').listeners.click(); await tick();
+ control('rest').listeners.click(); await tick();
+ assert.equal(statusText('delegator'), '☾ at rest');
+ delegation([delegator, worker]);
+ assert.equal(statusText('delegator'), '● running');
+ assert.equal(control('rest'), undefined);
+ delegation([delegator]);
+ assert.equal(statusText('delegator'), '☾ at rest');
+ docListeners.keydown({key:'Escape', target:{tagName:'BODY'}, preventDefault(){}});
+ // Running grandchildren propagate through quiet or idle intermediates in either arrival order.
+ const ancestor = {...delegator, last_seen:hours, health:'stale'};
+ const middle = run('middle', 'delegator', 'Middle', {state:'idle', last_seen:hours, health:'stale'});
+ const grandchild = {...worker, parent_run_id:'middle', state:'waiting_tool'};
+ delegation([grandchild, middle, ancestor]);
+ assert.equal(statusText('delegator'), '● running');
+ assert.equal(statusText('middle'), '● running');
+ assert.equal(group(), undefined);
+ assert.ok(ids.counts.textContent.includes('3 running'));
+ delegation([ancestor, middle, {...grandchild, state:'waiting_child'}]);
+ assert.equal(statusText('delegator'), '● running');
+ delegation([{...ancestor, live:null}, worker]);
+ assert.equal(statusText('delegator'), '● running');
+ assert.ok(!rowOf('delegator').className.includes('context'));
+ assert.equal(flatten(rowOf('delegator')).find(x => (x.className || '').startsWith('cell status')).title, 'A subagent is running');
+ // Settled, stale, stopped or unknown workers do not imply ongoing work.
+ for (const extra of [{state:'idle'}, {state:'waiting_user'}, {state:'completed'}, {health:'stale'}, {live:false}, {archived:true}, {state:'unknown'}]) {
+   delegation([delegator, {...worker, ...extra}]);
+   assert.equal(statusText('delegator'), '☾ at rest');
+ }
+ // Explicit approvals and finished/closed parent states retain their meaning.
+ for (const [extra, expected] of [[{state:'waiting_user'}, '◐ needs you'], [{state:'completed'}, '✓ done'], [{state:'failed'}, '✗ failed'], [{state:'cancelled'}, '– cancelled'], [{archived:true}, '■ archived'], [{live:false}, '■ closed']]) {
+   delegation([{...delegator, ...extra}, worker]);
+   assert.equal(statusText('delegator'), expected);
+ }
+ // Historical statuses follow that moment's descendants, even while live work changes.
+ const pastRuns = past.runs;
+ past.runs = [{...delegator, last_seen:pastIso, live:null}, {...worker, last_seen:pastIso}];
+ delegation([...snapshot.runs, delegator]);
+ cols()[30].listeners.click(); await tick();
+ assert.equal(statusText('delegator'), '● running');
+ delegation([delegator]);
+ assert.equal(statusText('delegator'), '● running');
+ docListeners.keydown({key:'L', target:{tagName:'BODY'}, preventDefault(){}}); await tick();
+ assert.equal(statusText('delegator'), '☾ at rest');
+ past.runs = pastRuns;
+ stream.listeners.snapshot({data:JSON.stringify(snapshot)}); await tick();
  // Direct API usage has no dollar receipt; never call it free or ChatGPT plan usage.
  for (const provider of ['openai', 'anthropic']) {
    stream.listeners.snapshot({data:JSON.stringify({...snapshot,ai:{enabled:true,status:'ready',provider,api_calls:1,subscription_calls:0,known_cost_usd:0,actual_cost_usd:null,unknown_cost_calls:1}})});
