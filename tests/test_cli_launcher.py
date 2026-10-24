@@ -180,7 +180,7 @@ class LauncherCliTests(unittest.TestCase):
         ):
             main(["--version"])
         self.assertEqual(error.exception.code, 0)
-        self.assertIn("Spiritboard 0.1.0", output.getvalue())
+        self.assertIn("Spiritboard 0.2.0", output.getvalue())
         instance.assert_not_called()
 
     def test_help_still_lists_commands(self):
