@@ -89,7 +89,7 @@ class StaticTests(unittest.TestCase):
         css = (STATIC / "style.css").read_text()
         self.assertRegex(css, r"\.row-open \{[^}]*opacity: 0;")
         self.assertIn(".run-row:hover .row-open, .run-row:focus-visible .row-open", css)
-        narrow = css[css.index("@container (max-width: 880px)") :]
+        narrow = re.search(r"@container \(max-width: 880px\) \{\n(.*?)\n\}", css, re.S).group(1)
         self.assertIn(".row-open { display: none; }", narrow)
 
     @unittest.skipUnless(shutil.which("node"), "Node is optional; browser syntax/DOM check skipped")
@@ -142,7 +142,7 @@ let stream;
 class EventSource { constructor() { this.listeners = {}; stream = this; } addEventListener(name, fn) { this.listeners[name] = fn; } }
 class Option extends Element { constructor(text,value) { super('option'); this.textContent = text; this.value = value; } }
 const requests = [], posts = [], copied = [];
-let renameStatus = 200, focusStatus = 200;
+let renameStatus = 200, focusStatus = 200, focusHold = null;
 const targets = {orphan:{available:true,kind:'focus',label:'cmux'}, ask:{available:true,kind:'resume',label:'resume',command:'claude --resume invented-0000'}};
 const navigator = {clipboard:{writeText:async text => { copied.push(text); }}};
 const timers = [];
@@ -155,6 +155,7 @@ const context = {document,localStorage,Option,EventSource,navigator,setInterval:
   }
   requests.push(url);
   if (url.endsWith('/focus')) {
+    if (focusHold) await focusHold;
     if (focusStatus !== 200) return {ok:false,status:focusStatus};
     return {ok:true,json:async()=>targets[decodeURIComponent(url.split('/')[3])] || {available:false,kind:'unsupported',label:''}};
   }
@@ -244,7 +245,7 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  focusStatus = 200;
  rowOf('root').listeners.pointerenter(); await tick();
  assert.equal(focusAsks('root'), 2);
- // o raises the focused row's window the same way.
+ // o raises the focused row's window the same way, and skips a row the server cannot open.
  rowOf('root').focus(); posts.splice(0);
  docListeners.keydown({key:'o', target:rowOf('root'), preventDefault() {}}); await tick();
  assert.deepEqual(posts, [{url:'/api/runs/root/focus', headers:{'X-Spiritboard':'focus'}}]);
@@ -255,20 +256,46 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  rowOf('child').listeners.pointerenter(); await tick();
  assert.equal(focusAsks('child'), 1);
  assert.equal(markOf('child'), undefined);
- stream.listeners.snapshot({data:JSON.stringify({...snapshot, runs:[...runs, run('shut', null, 'Shut', {state:'idle', live:false}), run('later', null, 'Later')]})});
+ rowOf('child').focus();
+ docListeners.keydown({key:'o', target:rowOf('child'), preventDefault() {}}); await tick();
+ assert.deepEqual(posts, []);
+ const extra = [run('shut', null, 'Shut', {state:'idle', live:false}), run('later', null, 'Later'), run('twin', null, 'Twin'), run('slow', null, 'Slow')];
+ stream.listeners.snapshot({data:JSON.stringify({...snapshot, runs:[...runs, ...extra]})});
  rowOf('shut').listeners.pointerenter(); await tick();
  assert.equal(focusAsks('shut'), 0);
- // A server that could not answer is asked again on the next point.
+ // A server that could not answer is not asked again on every redraw.
  targets.later = {available:true,kind:'focus',label:'iTerm'};
  focusStatus = 503;
  rowOf('later').listeners.pointerenter(); await tick();
- assert.equal(markOf('later'), undefined);
  focusStatus = 200;
  rowOf('later').listeners.pointerenter(); await tick();
- assert.equal(markOf('later').title, 'Open in iTerm · o');
- delete targets.later;
+ assert.equal(focusAsks('later'), 1);
+ assert.equal(markOf('later'), undefined);
+ // An answer that arrives after the session closed adds nothing.
+ targets.slow = {available:true,kind:'focus',label:'iTerm'};
+ let answer; focusHold = new Promise(resolve => { answer = resolve; });
+ rowOf('slow').listeners.pointerenter(); await tick();
+ stream.listeners.snapshot({data:JSON.stringify({...snapshot, runs:[...runs, ...extra.map(r => r.run_id === 'slow' ? {...r, state:'idle', live:false} : r)]})});
+ focusHold = null; answer(); await tick(); await tick();
+ assert.equal(markOf('slow'), undefined);
+ stream.listeners.snapshot({data:JSON.stringify({...snapshot, runs:[...runs, ...extra]})});
+ // Rows opened back to back each show, then clear, their own result.
+ targets.twin = {available:true,kind:'focus',label:'iTerm'};
+ rowOf('twin').listeners.pointerenter(); await tick();
+ focusStatus = 502;
+ markOf('root').listeners.click({stopPropagation() {}}); await tick();
+ focusStatus = 200;
+ markOf('twin').listeners.click({stopPropagation() {}}); await tick();
+ assert.equal(markOf('root').textContent, 'could not open');
+ assert.equal(markOf('twin').textContent, '✓');
+ timers.splice(0).forEach(fn => fn());
+ assert.equal(markOf('root').textContent, '↗');
+ assert.equal(markOf('twin').textContent, '↗');
+ rowOf('root').listeners.pointerenter(); await tick();
+ assert.equal(focusAsks('root'), 3);
+ posts.splice(0);
+ ['later', 'slow', 'twin', 'root'].forEach(id => delete targets[id]);
  stream.listeners.snapshot({data:JSON.stringify(snapshot)});
- delete targets.root;
  assert.ok(ids.flux.attrs['aria-label'].includes('Codex · work'));
  // Spend stays in the tooltip; the header only says summaries are on.
  assert.equal(ids['ai-status'].textContent, 'Summaries');

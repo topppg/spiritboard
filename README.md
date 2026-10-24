@@ -238,9 +238,9 @@ tmux panes and `wmctrl` windows are supported.
 Pointing at a row whose session is still open shows a small ↗ just before its
 name: click it, or press `o` on the focused row, to bring the window forward
 without opening the row. Spiritboard looks the window up the first time you
-point at or focus a row, so rows you never touch cost nothing, and rows never
-name the app. Narrow windows leave the ↗ out; `o` and the opened row's button
-still work.
+point at or focus a row, so rows you never touch cost nothing; only the ↗'s
+tooltip names the app. Narrow windows leave the ↗ out; `o` and the opened row's
+button still work.
 
 The ↗ and the button only bring a window forward. They never type into, signal
 or control an agent. The first iTerm2 or Terminal use can trigger a macOS
