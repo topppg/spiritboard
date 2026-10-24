@@ -11,6 +11,10 @@ on:
         description: Upload the validated package to PyPI (requires configured trusted publisher)
         default: false
         type: boolean
+      mac:
+        description: Build, notarize and attach both Mac DMGs (requires the macos-release environment and its secrets)
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -77,7 +81,7 @@ jobs:
           retention-days: 7
 
   mac-app:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && inputs.mac
     needs: build
     strategy:
       fail-fast: false
@@ -155,7 +159,11 @@ jobs:
           rm -f "$RUNNER_TEMP/spiritboard-signing.p12" "$RUNNER_TEMP/spiritboard-notary.p8"
 
   publish:
-    if: github.ref == 'refs/heads/main' && inputs.publish
+    # Without DMGs the Mac job is skipped on purpose; a failed or cancelled one still blocks.
+    if: >-
+      ${{ !cancelled() && github.ref == 'refs/heads/main' && inputs.publish
+      && needs.build.result == 'success'
+      && ((inputs.mac && needs.mac-app.result == 'success') || (!inputs.mac && needs.mac-app.result == 'skipped')) }}
     needs: [build, mac-app]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -174,11 +182,13 @@ jobs:
         with:
           name: spiritboard-dist
           path: dist
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - if: inputs.mac
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: spiritboard-mac-arm64
           path: mac-dist
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - if: inputs.mac
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: spiritboard-mac-x86_64
           path: mac-dist
@@ -188,15 +198,21 @@ jobs:
           RELEASE_REPOSITORY: ${{ github.repository }}
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_SHA: ${{ github.sha }}
+          RELEASE_MAC: ${{ inputs.mac }}
         run: |
+          mac=(--mac-dist mac-dist)
+          if [ "$RELEASE_MAC" != true ]; then mac=(--without-mac); fi
           uv run --no-project --no-config python scripts/paired_release.py preflight \
             --repository "$RELEASE_REPOSITORY" --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" \
-            --mac-dist mac-dist
+            "${mac[@]}"
       - name: Publish with short-lived trusted publishing credentials
         run: uv publish --trusted-publishing always dist/*
 
   github-release:
-    if: github.ref == 'refs/heads/main' && inputs.publish
+    if: >-
+      ${{ !cancelled() && github.ref == 'refs/heads/main' && inputs.publish
+      && needs.publish.result == 'success'
+      && ((inputs.mac && needs.mac-app.result == 'success') || (!inputs.mac && needs.mac-app.result == 'skipped')) }}
     needs: [build, mac-app, publish]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -213,11 +229,13 @@ jobs:
         with:
           name: spiritboard-dist
           path: dist
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - if: inputs.mac
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: spiritboard-mac-arm64
           path: mac-dist
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - if: inputs.mac
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: spiritboard-mac-x86_64
           path: mac-dist
@@ -227,10 +245,13 @@ jobs:
           RELEASE_REPOSITORY: ${{ github.repository }}
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_SHA: ${{ github.sha }}
+          RELEASE_MAC: ${{ inputs.mac }}
         run: |
+          mac=(--mac-dist mac-dist)
+          if [ "$RELEASE_MAC" != true ]; then mac=(--without-mac); fi
           uv run --no-project --no-config python scripts/paired_release.py pair \
             --repository "$RELEASE_REPOSITORY" --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" \
-            --mac-dist mac-dist
+            "${mac[@]}"
       - name: Report a partial release
         if: failure()
         run: |

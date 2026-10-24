@@ -363,6 +363,53 @@ def test_missing_mac_artifact_blocks_release_before_public_writes(
     assert services.calls == []
 
 
+def test_pairing_without_mac_attaches_only_the_python_files(
+    services: FakeGitHub, artifacts: Path
+) -> None:
+    release.pair_release(REPOSITORY, VERSION, SHA, artifacts, None)
+    assert services.release is not None
+    body = services.release["body"]
+    assert "macOS" not in body and "both files" in body
+    attached = {asset["name"]: services.assets[asset["id"]] for asset in services.release["assets"]}
+    assert set(attached) == {path.name for path in artifacts.iterdir()} | {"SHA256SUMS"}
+    assert (
+        attached["SHA256SUMS"]
+        == "".join(
+            f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
+            for path in sorted(artifacts.iterdir(), key=lambda path: path.name)
+        ).encode()
+    )
+    services.calls.clear()
+    release.pair_release(REPOSITORY, VERSION, SHA, artifacts, None)
+    assert services.writes == []
+
+
+def test_release_with_disk_images_is_not_repaired_without_them(
+    services: FakeGitHub, artifacts: Path
+) -> None:
+    release.pair_release(REPOSITORY, VERSION, SHA, artifacts)
+    services.calls.clear()
+    with pytest.raises(release.ReleaseError, match="metadata conflicts"):
+        release.preflight(REPOSITORY, VERSION, SHA, artifacts, None)
+    assert services.writes == []
+
+
+def test_cli_without_mac_skips_the_disk_images(
+    monkeypatch: pytest.MonkeyPatch, artifacts: Path
+) -> None:
+    seen: list[object] = []
+    monkeypatch.setattr(release, "preflight", lambda *args: seen.append(args[-1]))
+    command = ["paired_release.py", "preflight", "--repository", REPOSITORY]
+    command += ["--version", VERSION, "--sha", SHA, "--dist", str(artifacts)]
+    monkeypatch.setattr("sys.argv", [*command, "--without-mac"])
+    release.main()
+    assert seen == [None]
+    monkeypatch.setattr("sys.argv", [*command, "--without-mac", "--mac-dist", "mac-dist"])
+    with pytest.raises(SystemExit):
+        release.main()
+    assert seen == [None]
+
+
 def test_github_client_uses_argument_array_and_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[tuple[list[str], dict[str, object]]] = []
 
@@ -425,4 +472,16 @@ def test_workflow_pairs_after_publish_with_separate_permissions() -> None:
         assert f"name: spiritboard-mac-{arch}" in publish
         assert f"name: spiritboard-mac-{arch}" in pairing
     assert "--mac-dist mac-dist" in publish and "--mac-dist mac-dist" in pairing
+    # Without DMGs the Mac job is skipped on purpose; a failed or cancelled one still blocks.
+    inputs = workflow.split("\n    inputs:\n", 1)[1].split("\npermissions:", 1)[0]
+    assert "default: true" in inputs.split("      mac:\n", 1)[1]
+    assert "if: github.ref == 'refs/heads/main' && inputs.mac" in mac
+    assert "needs.build.result == 'success'" in publish
+    assert "needs.publish.result == 'success'" in pairing
+    for job in (publish, pairing):
+        assert "!cancelled()" in job
+        assert "(inputs.mac && needs.mac-app.result == 'success')" in job
+        assert "(!inputs.mac && needs.mac-app.result == 'skipped')" in job
+        assert job.count("- if: inputs.mac\n") == 2
+        assert 'if [ "$RELEASE_MAC" != true ]; then mac=(--without-mac); fi' in job
     assert "uv publish" not in pairing
