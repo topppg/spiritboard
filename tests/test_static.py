@@ -38,6 +38,7 @@ class StaticTests(unittest.TestCase):
                 "/app.js",
                 "/summary-settings.css",
                 "/summary-settings.js",
+                "/select-menu.js",
             },
         )
         self.assertTrue(

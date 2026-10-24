@@ -27,6 +27,7 @@ ASSETS = {
     "/style.css": ("style.css", "text/css; charset=utf-8"),
     "/summary-settings.js": ("summary-settings.js", "text/javascript; charset=utf-8"),
     "/summary-settings.css": ("summary-settings.css", "text/css; charset=utf-8"),
+    "/select-menu.js": ("select-menu.js", "text/javascript; charset=utf-8"),
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
     "/fonts/space-grotesk.woff2": ("fonts/space-grotesk.woff2", "font/woff2"),
     "/fonts/space-mono-400.woff2": ("fonts/space-mono-400.woff2", "font/woff2"),

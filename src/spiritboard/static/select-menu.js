@@ -1,6 +1,8 @@
-// Mac app only: WebKit opens <select> as a legacy menu that CSS cannot style, so selects
-// open this popover instead. The app injects it because it may attach to an older server.
+// Selects open this popover instead of the browser's own menu, which CSS cannot style.
+// The Mac app also injects it because it may attach to an older server, so it installs once.
 (() => {
+  if (document.documentElement.dataset.selectMenu) return;
+  document.documentElement.dataset.selectMenu = "on";
   const css = `
     select {
       appearance: none !important;
@@ -12,7 +14,7 @@
       box-shadow: 0 1px 0 rgba(255,255,255,.06) inset, 0 1px 4px rgba(0,0,0,.18);
     }
     select:hover:not(:disabled), select[aria-expanded="true"] { border-color: var(--run) !important; }
-    .mac-select-menu {
+    .select-menu {
       position: fixed; z-index: 2147483647; box-sizing: border-box; margin: 0; padding: 5px;
       overflow-y: auto; overscroll-behavior: contain; list-style: none;
       border: 1px solid rgba(255,255,255,.1); border-radius: 10px;
@@ -22,20 +24,20 @@
       opacity: 0; transform: translateY(-3px) scale(.98); transform-origin: top center;
       transition: opacity .12s ease-out, transform .12s ease-out;
     }
-    .mac-select-menu.is-above { transform-origin: bottom center; transform: translateY(3px) scale(.98); }
-    .mac-select-menu.is-open { opacity: 1; transform: none; }
-    .mac-select-menu li {
+    .select-menu.is-above { transform-origin: bottom center; transform: translateY(3px) scale(.98); }
+    .select-menu.is-open { opacity: 1; transform: none; }
+    .select-menu li {
       display: flex; align-items: center; gap: 6px; min-height: 26px; padding: 3px 12px 3px 6px;
       border-radius: 6px; white-space: nowrap; cursor: default; user-select: none; -webkit-user-select: none;
     }
-    .mac-select-menu li::before { content: ""; flex: none; width: 14px; height: 14px; }
-    .mac-select-menu li[aria-selected="true"]::before {
+    .select-menu li::before { content: ""; flex: none; width: 14px; height: 14px; }
+    .select-menu li[aria-selected="true"]::before {
       background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%23b79cff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 7.4l2.6 2.6L11 4.2'/%3E%3C/svg%3E") center no-repeat;
     }
-    .mac-select-menu li.is-active { background: rgba(183,156,255,.24); color: var(--bright, #f4f0ff); }
-    .mac-select-menu li[aria-disabled="true"] { color: var(--dim, #6b6480); }
-    .mac-select-menu li[hidden] { display: none; }
-    @media (prefers-reduced-motion: reduce) { .mac-select-menu, .mac-select-menu.is-above { transition: none; transform: none; } }
+    .select-menu li.is-active { background: rgba(183,156,255,.24); color: var(--bright, #f4f0ff); }
+    .select-menu li[aria-disabled="true"] { color: var(--dim, #6b6480); }
+    .select-menu li[hidden] { display: none; }
+    @media (prefers-reduced-motion: reduce) { .select-menu, .select-menu.is-above { transition: none; transform: none; } }
   `;
   // The dashboard's CSP blocks <style> elements but not CSSOM. Older WebKit keeps native menus.
   if (!("adoptedStyleSheets" in document)) return;
@@ -100,8 +102,8 @@
     typed = "";
     typedAt = 0;
     const list = document.createElement("ul");
-    list.className = "mac-select-menu";
-    list.id = "mac-select-menu";
+    list.className = "select-menu";
+    list.id = "select-menu";
     list.setAttribute("role", "listbox");
     const label = select.labels?.[0];
     const name = label
@@ -110,7 +112,7 @@
     if (name) list.setAttribute("aria-label", name);
     [...select.options].forEach((option, index) => {
       const item = document.createElement("li");
-      item.id = `mac-select-option-${index}`;
+      item.id = `select-option-${index}`;
       item.setAttribute("role", "option");
       item.setAttribute("aria-selected", String(option.selected));
       if (option.disabled) item.setAttribute("aria-disabled", "true");
@@ -183,7 +185,7 @@
   }, true);
 
   const enabledItem = (event) => {
-    const item = open && event.target.closest?.(".mac-select-menu li");
+    const item = open && event.target.closest?.(".select-menu li");
     return item && open.list.contains(item) && item.getAttribute("aria-disabled") !== "true" ? item : null;
   };
 
