@@ -14,7 +14,7 @@ waiting for you or gone, and a button that takes you straight to it.
 It only reads what the agents already write to disk. It never starts, steers or
 stops an agent, and nothing leaves your machine unless you turn on summaries.
 
-![Spiritboard showing sixteen agents across Claude Code, Codex, opencode and Pi](https://raw.githubusercontent.com/topppg/spiritboard/062a77d179c2fadc1402a0a91f3ff8bb444ab7f7/docs/dashboard.png)
+![Spiritboard showing sixteen agents across Claude Code, Codex, opencode and Pi](https://raw.githubusercontent.com/topppg/spiritboard/d951c5338d8f996102dffeff99da1e995bc50852/docs/dashboard.png)
 
 <sub>Synthetic data: invented sessions, projects and activity.</sub>
 
@@ -111,9 +111,10 @@ New harnesses plug in as one module each (see [the source guide](https://github.
 
 - **Every harness at once.** Each storage profile (personal and work accounts,
   the default CLI folders, the desktop apps) is a harness with its own colour,
-  live events per minute, and a 10-minute activity chart stacked by harness. The
-  harness list shows the harnesses with something running or drawn in the chart;
-  idle ones stay available in the harness filter.
+  live events per minute, and a 10-minute activity chart stacked by harness,
+  with dots for the latest events. The harness list shows the harnesses with
+  something running or drawn in the chart; idle ones stay available in the
+  harness filter.
 - **Where to put your attention.** Every session has one status:
 
   | Status | Meaning |

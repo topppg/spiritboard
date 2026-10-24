@@ -196,6 +196,11 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  assert.ok(ids.harnesses.textContent.includes('+ 3 idle, in the harness filter'));
  assert.ok(!ids.harnesses.textContent.includes('noisy'));
  assert.ok(ids.flux.children.some(x => x.className === 'col'));
+ // The latest events spray up to 15 dots above each of the last 12 bars.
+ const dots = ids.flux.children.filter(x => x.className === 'dot');
+ assert.equal(dots.length, 20);
+ assert.ok(dots.every(d => parseFloat(d.style.left) >= 80));
+ assert.equal(ids['flux-note'].textContent, 'events/min · dots = latest events');
  assert.ok(ids.flux.attrs['aria-label'].includes('Codex · work'));
  // Spend stays in the tooltip; the header only says summaries are on.
  assert.equal(ids['ai-status'].textContent, 'Summaries');
