@@ -181,14 +181,18 @@ def verify_pypi(version: str, hashes: dict[str, str], *, attempts: int = 12) -> 
     raise ReleaseError("PyPI upload receipts are incomplete; rerun the failed GitHub release job")
 
 
-def release_body(repository: str, version: str, sha: str) -> str:
+def release_body(repository: str, version: str, sha: str, mac: bool = True) -> str:
+    files = (
+        "The macOS disk images contain the signed and notarized app for Apple Silicon and Intel.\n"
+        "SHA256SUMS records SHA-256 digests for all four files.\n"
+        if mac
+        else "SHA256SUMS records SHA-256 digests for both files.\n"
+    )
     return (
         f"Spiritboard {version}\n\n"
         f"PyPI: https://pypi.org/project/spiritboard/{version}/\n"
         f"Source: https://github.com/{repository}/commit/{sha}\n\n"
-        "The attached wheel and source archive are the exact files verified on PyPI.\n"
-        "The macOS disk images contain the signed and notarized app for Apple Silicon and Intel.\n"
-        "SHA256SUMS records SHA-256 digests for all four files.\n"
+        "The attached wheel and source archive are the exact files verified on PyPI.\n" + files
     )
 
 
@@ -207,11 +211,12 @@ def validate_release(
     sha: str,
     value: dict[str, object] | None,
     hashes: dict[str, str],
+    mac: bool = True,
 ) -> dict[str, dict[str, object]]:
     if (
         value is None
         or value.get("tag_name") != f"v{version}"
-        or value.get("body") != release_body(repository, version, sha)
+        or value.get("body") != release_body(repository, version, sha, mac)
         or value.get("draft") is not False
         or value.get("prerelease") is not False
         or not isinstance(value.get("id"), int)
@@ -245,15 +250,17 @@ def preflight(
     version: str,
     sha: str,
     directory: Path,
-    mac_directory: Path = Path("mac-dist"),
+    mac_directory: Path | None = Path("mac-dist"),
 ) -> None:
     tag = validate_target(repository, version, sha)
-    hashes = distributions(directory, version) | mac_distributions(mac_directory, version)
+    hashes = distributions(directory, version)
+    if mac_directory is not None:
+        hashes |= mac_distributions(mac_directory, version)
     check_tag(repository, version, sha)
     hashes["SHA256SUMS"] = hashlib.sha256(checksum_bytes(hashes)).hexdigest()
     value = github_object(f"repos/{repository}/releases/tags/{tag}")
     if value is not None:
-        validate_release(repository, version, sha, value, hashes)
+        validate_release(repository, version, sha, value, hashes, mac_directory is not None)
 
 
 def pair_release(
@@ -261,12 +268,17 @@ def pair_release(
     version: str,
     sha: str,
     directory: Path,
-    mac_directory: Path = Path("mac-dist"),
+    mac_directory: Path | None = Path("mac-dist"),
 ) -> None:
     tag = validate_target(repository, version, sha)
     preflight(repository, version, sha, directory, mac_directory)
     pypi_hashes = distributions(directory, version)
-    hashes = pypi_hashes | mac_distributions(mac_directory, version)
+    sources = dict.fromkeys(pypi_hashes, directory)
+    hashes = dict(pypi_hashes)
+    if mac_directory is not None:
+        mac_hashes = mac_distributions(mac_directory, version)
+        sources |= dict.fromkeys(mac_hashes, mac_directory)
+        hashes |= mac_hashes
     verify_pypi(version, pypi_hashes)
     if not check_tag(repository, version, sha):
         github_object(
@@ -284,12 +296,12 @@ def pair_release(
                 "tag_name": tag,
                 "target_commitish": sha,
                 "name": f"Spiritboard {version}",
-                "body": release_body(repository, version, sha),
+                "body": release_body(repository, version, sha, mac_directory is not None),
                 "draft": False,
                 "prerelease": False,
             },
         )
-    existing = validate_release(repository, version, sha, value, hashes)
+    existing = validate_release(repository, version, sha, value, hashes, mac_directory is not None)
     with tempfile.TemporaryDirectory(prefix="spiritboard-release-") as temporary:
         checksum = Path(temporary) / "SHA256SUMS"
         checksum.write_bytes(checksum_data)
@@ -299,11 +311,7 @@ def pair_release(
                     f"https://uploads.github.com/repos/{repository}/releases/{value['id']}/assets"
                     f"?name={urllib.parse.quote(name, safe='')}"
                 )
-                upload = (
-                    checksum
-                    if name == checksum.name
-                    else (directory / name if name in pypi_hashes else mac_directory / name)
-                )
+                upload = checksum if name == checksum.name else sources[name] / name
                 asset = github_object(endpoint, upload=upload)
                 if asset is None:
                     raise ReleaseError("GitHub did not confirm the release asset upload")
@@ -318,14 +326,18 @@ def main() -> None:
     parser.add_argument("--version", required=True)
     parser.add_argument("--sha", required=True)
     parser.add_argument("--dist", type=Path, default=Path("dist"))
-    parser.add_argument("--mac-dist", type=Path, default=Path("mac-dist"))
+    mac = parser.add_mutually_exclusive_group()
+    mac.add_argument("--mac-dist", type=Path, default=Path("mac-dist"))
+    # Until the Apple signing credentials exist, a release can carry the Python files alone.
+    mac.add_argument("--without-mac", action="store_true")
     args = parser.parse_args()
+    mac_dist = None if args.without_mac else args.mac_dist
     try:
         if args.command == "preflight":
-            preflight(args.repository, args.version, args.sha, args.dist, args.mac_dist)
+            preflight(args.repository, args.version, args.sha, args.dist, mac_dist)
             print("Existing tag, release, and assets verified; nothing was changed")
         else:
-            pair_release(args.repository, args.version, args.sha, args.dist, args.mac_dist)
+            pair_release(args.repository, args.version, args.sha, args.dist, mac_dist)
     except (ReleaseError, OSError, subprocess.TimeoutExpired) as exc:
         message = str(exc) if isinstance(exc, ReleaseError) else "Release operation failed"
         parser.exit(1, f"{message}\n")

@@ -363,6 +363,67 @@ def test_missing_mac_artifact_blocks_release_before_public_writes(
     assert services.calls == []
 
 
+def test_pairing_without_mac_attaches_only_the_python_files(
+    services: FakeGitHub, artifacts: Path
+) -> None:
+    release.pair_release(REPOSITORY, VERSION, SHA, artifacts, None)
+    assert services.release is not None
+    body = services.release["body"]
+    assert "macOS" not in body and "both files" in body
+    attached = {asset["name"]: services.assets[asset["id"]] for asset in services.release["assets"]}
+    assert set(attached) == {path.name for path in artifacts.iterdir()} | {"SHA256SUMS"}
+    assert (
+        attached["SHA256SUMS"]
+        == "".join(
+            f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
+            for path in sorted(artifacts.iterdir(), key=lambda path: path.name)
+        ).encode()
+    )
+    services.calls.clear()
+    release.pair_release(REPOSITORY, VERSION, SHA, artifacts, None)
+    assert services.writes == []
+
+
+def test_release_with_disk_images_is_not_repaired_without_them(
+    services: FakeGitHub, artifacts: Path
+) -> None:
+    release.pair_release(REPOSITORY, VERSION, SHA, artifacts)
+    services.calls.clear()
+    with pytest.raises(release.ReleaseError, match="metadata conflicts"):
+        release.preflight(REPOSITORY, VERSION, SHA, artifacts, None)
+    assert services.writes == []
+
+
+def test_release_without_disk_images_is_not_repaired_with_them(
+    services: FakeGitHub, artifacts: Path
+) -> None:
+    release.pair_release(REPOSITORY, VERSION, SHA, artifacts, None)
+    services.calls.clear()
+    with pytest.raises(release.ReleaseError, match="metadata conflicts"):
+        release.preflight(REPOSITORY, VERSION, SHA, artifacts)
+    assert services.writes == []
+
+
+@pytest.mark.parametrize("command", ["preflight", "pair"])
+def test_cli_without_mac_skips_the_disk_images(
+    monkeypatch: pytest.MonkeyPatch, artifacts: Path, command: str
+) -> None:
+    seen: list[object] = []
+    target = "preflight" if command == "preflight" else "pair_release"
+    monkeypatch.setattr(release, target, lambda *args: seen.append(args[-1]))
+    argv = ["paired_release.py", command, "--repository", REPOSITORY]
+    argv += ["--version", VERSION, "--sha", SHA, "--dist", str(artifacts)]
+    monkeypatch.setattr("sys.argv", argv)
+    release.main()
+    monkeypatch.setattr("sys.argv", [*argv, "--without-mac"])
+    release.main()
+    assert seen == [Path("mac-dist"), None]
+    monkeypatch.setattr("sys.argv", [*argv, "--without-mac", "--mac-dist", "mac-dist"])
+    with pytest.raises(SystemExit):
+        release.main()
+    assert seen == [Path("mac-dist"), None]
+
+
 def test_github_client_uses_argument_array_and_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[tuple[list[str], dict[str, object]]] = []
 
@@ -425,4 +486,19 @@ def test_workflow_pairs_after_publish_with_separate_permissions() -> None:
         assert f"name: spiritboard-mac-{arch}" in publish
         assert f"name: spiritboard-mac-{arch}" in pairing
     assert "--mac-dist mac-dist" in publish and "--mac-dist mac-dist" in pairing
+    # Without DMGs the Mac job is skipped on purpose; a failed or cancelled one still blocks.
+    inputs = workflow.split("\n    inputs:\n", 1)[1].split("\npermissions:", 1)[0]
+    assert "default: true" in inputs.split("      mac:\n", 1)[1]
+    assert "if: github.ref == 'refs/heads/main' && inputs.mac" in mac
+    assert "needs.build.result == 'success'" in publish
+    assert "needs.publish.result == 'success'" in pairing
+    for job in (publish, pairing):
+        assert "!cancelled()" in job
+        assert "(inputs.mac && needs.mac-app.result == 'success')" in job
+        assert "(!inputs.mac && needs.mac-app.result == 'skipped')" in job
+        assert job.count("- if: inputs.mac\n") == 2
+        # A folded '>' or '|' would end the condition with a newline, which is always true.
+        assert "    if: >-\n      ${{ !cancelled() && github.ref" in job
+        assert "skipped')) }}\n    needs: [build, mac-app" in job
+        assert "false) mac=(--without-mac) ;;" in job and '*) echo "Unexpected mac input' in job
     assert "uv publish" not in pairing

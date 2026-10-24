@@ -61,11 +61,12 @@ using it. No old folders are silently moved or deleted. Uninstalling the tool wi
 
 ## macOS app distribution
 
-The [macOS app guide](MAC_APP.md) covers the standalone window and Dock app. After the Apple
-credentials below are configured, every new public release builds signed and notarized Apple
-Silicon and Intel DMGs and attaches them to the matching GitHub Release. The Python package
-continues to install through `uvx spiritboard`. There is no public Mac DMG yet; the existing
-`0.1.0` release predates this workflow. An unsigned local DMG is only for testing.
+The [macOS app guide](MAC_APP.md) covers the standalone window and Dock app. With the Apple
+credentials below configured, a release run with **mac** checked builds signed and notarized Apple
+Silicon and Intel DMGs and attaches them to the matching GitHub Release. Until then, unchecking
+**mac** releases the Python package alone. The Python package
+continues to install through `uvx spiritboard`. There is no public Mac DMG yet: `0.1.0` predates
+this workflow, and a release run with **mac** unchecked carries none. An unsigned local DMG is only for testing.
 
 ## Python package and Mac release
 
@@ -133,8 +134,8 @@ in a PR:
 | `MAC_NOTARY_ISSUER_ID` | Issuer ID for that `.p8` key. |
 
 The workflow imports them into a temporary keychain on each Mac runner, removes the keychain
-after building, and never saves credentials in release artifacts. Both the dry run and the
-publish run need these secrets. The first release with Mac DMGs must use a **new version**;
+after building, and never saves credentials in release artifacts. With **mac** checked, both the
+dry run and the publish run need these secrets. The first release with Mac DMGs must use a **new version**;
 existing PyPI files, tags, and GitHub release assets are immutable. See [Apple's notarization
 guide](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)
 for obtaining and configuring signing credentials.
@@ -146,10 +147,13 @@ for obtaining and configuring signing credentials.
 2. Merge the approved changes and verify `Checks` and `Distribution` on `main`.
 3. In GitHub Actions, select **Release package**, choose the `main` branch, enter the exact
    committed version, and leave **publish** unchecked. This reruns the distribution matrix,
-   tests, and metadata validation, then builds and notarizes both Mac DMGs. The wheel, source
-   archive, and DMGs are retained as seven-day artifacts.
-4. Inspect that run and its artifacts, including both DMGs. When ready to upload, manually run
-   the same workflow against the reviewed `main` commit with **publish** checked. Ensure `main` has not advanced
+   tests, and metadata validation. With **mac** checked it also builds and notarizes both Mac
+   DMGs; uncheck **mac** to release the Python package alone while the Apple credentials are not
+   configured. The wheel, source archive, and any DMGs are retained as seven-day artifacts.
+4. Inspect that run and its artifacts, including both DMGs when **mac** is checked. When ready to
+   upload, manually run the same workflow against the reviewed `main` commit with **publish**
+   checked and the same **mac** choice. A failed or cancelled Mac job blocks the upload; only an
+   unchecked **mac** skips it. Ensure `main` has not advanced
    since review. Approve the `pypi` deployment only after inspecting that run's source and outputs.
 5. The publishing job rejects an existing `vVERSION` tag that resolves to another commit,
    including annotated tags, or conflicting existing GitHub release metadata or assets.
@@ -157,9 +161,9 @@ for obtaining and configuring signing credentials.
    PyPI's SHA-256 receipts against both files from that run's validated build artifact. It then
    creates `vVERSION` at the run's exact `main` commit SHA, not the latest moving `main` branch,
    and a matching GitHub Release. The release links PyPI and the source commit and attaches the
-   same wheel, source archive, both signed and notarized DMGs, and a `SHA256SUMS` file covering
-   all four payloads. Existing tags and assets are never moved or overwritten.
-6. Verify the resulting PyPI project, version, README, GitHub tag/release, both DMG downloads,
+   same wheel and source archive, both signed and notarized DMGs when **mac** is checked, and a
+   `SHA256SUMS` file covering every attached payload. Existing tags and assets are never moved or overwritten.
+6. Verify the resulting PyPI project, version, README, GitHub tag/release, both DMG downloads (with **mac**),
    and installation in a clean environment. Only then update public installation instructions
    and announce the release.
 

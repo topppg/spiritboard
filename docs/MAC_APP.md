@@ -60,8 +60,10 @@ The build signs the bundled Python program and the app, notarizes the DMG, and s
 ticket. Apple requires Developer ID signing and notarization for normal distribution outside
 the Mac App Store. Keep the signing identity and notarization credentials out of the repo.
 
-The release workflow builds, signs, notarizes, and checks both Mac architectures before uploading
-the Python package to PyPI. It attaches both DMGs to the matching GitHub Release, with their
-SHA-256 digests in `SHA256SUMS`. The existing `uvx spiritboard` command remains available. See
+With **mac** checked, the release workflow builds, signs, notarizes, and checks both Mac
+architectures before uploading the Python package to PyPI. It attaches both DMGs to the matching
+GitHub Release, with their SHA-256 digests in `SHA256SUMS`. Until the Apple credentials are
+configured, releases run with **mac** unchecked and carry no DMG. The existing `uvx spiritboard` command remains available. See
 the [distribution guide](DISTRIBUTION.md#maintainer-setup-macos-releases) for the required Apple
-credentials and release procedure. No public Mac DMG exists until a new version is released.
+credentials and release procedure. No public Mac DMG exists until a release runs with **mac**
+checked.
