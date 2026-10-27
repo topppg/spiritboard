@@ -10,6 +10,8 @@ const { pathToFileURL } = require("node:url");
   try {
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
     const page = await context.newPage();
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(error.message));
     await page.route("**/*", (route) => {
       const target = new URL(route.request().url());
       return target.origin === new URL(url).origin ? route.continue() : route.abort();
@@ -18,6 +20,17 @@ const { pathToFileURL } = require("node:url");
     await page.locator(".run-row").first().waitFor();
     await page.locator("#demo-banner").waitFor({ state: "visible" });
     await page.evaluate(() => document.fonts.ready);
+    await page.setViewportSize({ width: 1440, height: 1040 });
+    await page.locator(".run-row").filter({ hasText: "Release notes" }).click();
+    await page.locator("#detail").getByRole("button", { name: "let it rest" }).click();
+    await page.keyboard.press("Escape");
+    await page.locator(".brand").click();
+    await page.screenshot({ path: resolve("docs/dashboard.png"), fullPage: true });
+    await page.locator(".run-row").filter({ hasText: "Search rehearsal" }).click();
+    await page.locator("#detail").waitFor();
+    await page.screenshot({ path: resolve("docs/session-open.png"), fullPage: true });
+    await page.keyboard.press("Escape");
+    await page.setViewportSize({ width: 1280, height: 800 });
     for (let frame = 0; frame < 50; frame++) {
       if (frame === 10) await page.locator('[data-view="waiting"]').click();
       if (frame === 17) await page.locator(".run-row").filter({ hasText: "Docs worker" }).click();
@@ -29,10 +42,12 @@ const { pathToFileURL } = require("node:url");
       await page.screenshot({ path: resolve(frames, `frame-${String(frame).padStart(3, "0")}.png`) });
     }
     await page.unroute("**/*");
+    await page.route("**/*", (route) => new URL(route.request().url()).protocol === "file:" ? route.continue() : route.abort());
     await page.setViewportSize({ width: 1280, height: 640 });
     await page.goto(pathToFileURL(resolve("docs/media/social-preview.html")).href);
     await page.evaluate(() => document.fonts.ready);
     await page.screenshot({ path: resolve("docs/media/social-preview.png") });
+    if (errors.length) throw new Error(`Browser errors: ${errors.join("; ")}`);
   } finally {
     await browser.close();
   }
