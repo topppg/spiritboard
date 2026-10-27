@@ -517,8 +517,9 @@
       state.order.push(run.run_id);
       const all = children.get(run.run_id) || [];
       const inView = all.filter((c) => visible.has(c.run_id));
-      // An idle or quiet session folds its settled subagents unless it is only context for them.
-      const settled = ["idle", "quiet", "rest"].includes(statusOf(run).key) && inView.every((c) => rank(c).rank >= 3)
+      // A finished turn, idle or quiet session folds settled subagents unless it is only context for them.
+      const status = statusOf(run);
+      const settled = (status.turn || ["idle", "quiet", "rest"].includes(status.key)) && inView.every((c) => rank(c).rank >= 3)
         && direct.has(run.run_id);
       // Your choice wins: true folds them all, false shows them all, even ones outside this view.
       const choice = state.folds.get(run.run_id);

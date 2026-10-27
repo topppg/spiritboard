@@ -120,7 +120,7 @@ New harnesses plug in as one module each (see [the source guide](https://github.
   | Status | Meaning |
   | --- | --- |
   | ◐ **needs you** | Waiting for your approval. |
-  | ◐ **your turn** | Finished its turn and is waiting for your next direction: for 12 hours while the session is still open, otherwise for 30 minutes. |
+  | ◐ **your turn** | Finished its turn and is waiting for your next direction: for 12 hours while the session is still open, otherwise for 30 minutes. Settled subagents stay folded by default; opening the session or expanding its subagent list shows them. |
   | ☾ **at rest** | A turn you checked with **let it rest** (or `r`) in its detail view; nothing needed now. It goes back to your turn as soon as the agent does anything. Kept in this browser only. |
   | ● **running** | Working, including while it waits on a tool or a subagent. A running descendant also keeps its main agent running, even if the main agent's own transcript is idle or quiet. Explicit approvals, finished runs and closed sessions keep their own status. |
   | ◌ **open · idle** | Still open in a terminal or app, idle for longer. It stays in the active view however long it idles, dimmed, grouped under one folded **▸ N open · idle** line at the bottom of the list (unless one of its subagents is running or needs you), with its subagents folded. Opening a session lists all its subagents and closing it folds them again, keeping only ones that are running or need you; **▸ N subagents** (or `s`) folds or unfolds them without opening the session, and closes both when its panel is open. Its summary and title are not refreshed while it idles. |
