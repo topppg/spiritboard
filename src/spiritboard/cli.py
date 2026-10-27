@@ -222,10 +222,7 @@ def serve_dashboard(args: argparse.Namespace) -> int:
             name="spiritboard-browser",
             daemon=True,
         ).start()
-        try:
-            while not server.stopping.wait(1):
-                pass
-        except KeyboardInterrupt:
+        while not server.stopping.wait(1):
             pass
     return 0
 
@@ -380,6 +377,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.no_discovery and (args.config or args.watch):
             raise ValueError("conflicting discovery settings")
         return serve_dashboard(args)
+    except KeyboardInterrupt:
+        return 0
     except LaunchError as error:
         print(str(error))
         return 1

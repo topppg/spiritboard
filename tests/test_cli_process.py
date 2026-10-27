@@ -10,6 +10,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import urlsplit
 
 
@@ -152,10 +153,47 @@ class CliProcessTests(unittest.TestCase):
         )
         self.assertEqual(prune.returncode, 1)
         self.assertIn("Stop the dashboard", prune.stdout)
-        self.stop(process)
+        output = self.stop(process)
         if os.name == "posix":
-            self.assertEqual(process.returncode, 0)
+            self.assertEqual(process.returncode, 0, output)
             self.assertFalse((self.data / "instance.json").exists())
+        restarted = self.launch(*arguments)
+        self.assertNotEqual(
+            self.ready(restarted, self.data)["instance_id"], metadata["instance_id"]
+        )
+
+    @unittest.skipUnless(os.name == "posix", "Windows terminate does not send Ctrl-C")
+    def test_interrupt_during_startup_cleans_up_and_allows_restart(self) -> None:
+        marker = self.root / "startup-paused"
+        arguments = ["--no-discovery", "--no-open", "--port", "0"]
+        script = """
+import sys
+import threading
+from pathlib import Path
+from unittest.mock import patch
+
+from spiritboard.cli import main
+
+def pause_startup() -> None:
+    Path(sys.argv[1]).touch()
+    threading.Event().wait(30)
+
+with patch("spiritboard.summaries.Summarizer.start", side_effect=pause_startup):
+    raise SystemExit(main(sys.argv[2:]))
+"""
+        command = [sys.executable, "-c", script, str(marker), *arguments]
+        with patch.object(self, "command", return_value=command):
+            process = self.launch()
+        metadata = self.ready(process, self.data)
+        deadline = time.monotonic() + 8
+        while not marker.exists() and time.monotonic() < deadline:
+            self.assertIsNone(process.poll())
+            time.sleep(0.01)
+        self.assertTrue(marker.exists(), "Dashboard did not pause during startup")
+        output = self.stop(process)
+        self.assertEqual(process.returncode, 0, output)
+        self.assertNotIn("Traceback", output)
+        self.assertFalse((self.data / "instance.json").exists())
         restarted = self.launch(*arguments)
         self.assertNotEqual(
             self.ready(restarted, self.data)["instance_id"], metadata["instance_id"]

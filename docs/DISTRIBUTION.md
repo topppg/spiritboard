@@ -82,7 +82,8 @@ Mac DMGs join the GitHub assets after signing credentials are configured.
 checks the command's help/version and the bundled HTML, CSS, and JavaScript from outside the
 checkout, without reusing cached installations of an older same-version build. Synthetic
 subprocess tests also check startup, storage, instance reuse, conflicting
-options, demo isolation and restart against each installed artifact. These checks do not
+options, demo isolation and restart against each installed artifact. On macOS and Linux,
+they also interrupt startup with Ctrl-C and verify clean shutdown and restart. These checks do not
 discover profiles, read transcripts, start model calls, or prove
 that every native integration works on every OS. The normal `Checks` workflow runs the unit tests.
 
