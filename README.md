@@ -14,7 +14,7 @@ waiting for you or gone, and a button that takes you straight to it.
 It only reads what the agents already write to disk. It never starts, steers or
 stops an agent, and nothing leaves your machine unless you turn on summaries.
 
-![Spiritboard showing sixteen agents across Claude Code, Codex, opencode and Pi](https://raw.githubusercontent.com/topppg/spiritboard/d951c5338d8f996102dffeff99da1e995bc50852/docs/dashboard.png)
+![Spiritboard showing six synthetic harnesses, subagents, attention states and event history](https://raw.githubusercontent.com/topppg/spiritboard/8088b83e8a8d7f1e50ad359955437575efacc4b3/docs/dashboard.png)
 
 <sub>Synthetic data: invented sessions, projects and activity.</sub>
 
@@ -56,7 +56,7 @@ AI summaries are optional and stay off unless you enable them.
 <details>
 <summary>Watch a 10-second tour: attention filters, subagents and task search</summary>
 
-![A synthetic Spiritboard demo filtering agents that need attention, opening a subagent's details, and searching tasks](https://raw.githubusercontent.com/topppg/spiritboard/820e9a80d6f03ad10729e23fc24a5cd91910c93e/docs/media/demo.gif)
+![A synthetic Spiritboard demo filtering agents that need attention, opening a subagent's details, and searching tasks](https://raw.githubusercontent.com/topppg/spiritboard/8088b83e8a8d7f1e50ad359955437575efacc4b3/docs/media/demo.gif)
 
 Invented SDK sessions only: no real profiles, tools, credentials or model calls.
 This is an interaction demo, not a performance measurement.
@@ -141,7 +141,7 @@ New harnesses plug in as one module each (see [the source guide](https://github.
   iTerm2, Terminal, VS Code, the ChatGPT, Claude or DeepSeek Harness app), or copy a
   resume command when it is closed.
 
-![An open session with its summary, latest request and an open in Ghostty button on its title line](https://raw.githubusercontent.com/topppg/spiritboard/062a77d179c2fadc1402a0a91f3ff8bb444ab7f7/docs/session-open.png)
+![An expanded synthetic session showing its harness, project, latest activity and your request](https://raw.githubusercontent.com/topppg/spiritboard/8088b83e8a8d7f1e50ad359955437575efacc4b3/docs/session-open.png)
 
 <sub>Synthetic data: invented sessions, projects and activity.</sub>
 
