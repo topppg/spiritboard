@@ -14,7 +14,7 @@ waiting for you or gone, and a button that takes you straight to it.
 It only reads what the agents already write to disk. It never starts, steers or
 stops an agent, and nothing leaves your machine unless you turn on summaries.
 
-![Synthetic SWE sessions with running parent and subagent rows, and an expanded session showing open in Ghostty and let it rest](https://raw.githubusercontent.com/topppg/spiritboard/977436f35176959c7f9c9c429c03aac335861d4e/docs/dashboard.png)
+![Synthetic SWE sessions with running parent and subagent rows, and an expanded session showing open in Ghostty and let it rest](https://raw.githubusercontent.com/topppg/spiritboard/af56519deaaa15878733616fa9484a9fff2dbefc/docs/dashboard.png)
 
 <sub>Synthetic data: invented software engineering sessions, projects, activity and app targets.</sub>
 
@@ -56,7 +56,7 @@ AI summaries are optional and stay off unless you enable them.
 <details>
 <summary>Watch a 10-second tour: attention filters, session actions and task search</summary>
 
-![A synthetic demo filtering agents that need attention, showing session actions, letting a finished turn rest, and searching delegated work](https://raw.githubusercontent.com/topppg/spiritboard/977436f35176959c7f9c9c429c03aac335861d4e/docs/media/demo.gif)
+![A synthetic demo filtering agents that need attention, showing session actions, letting a finished turn rest, and searching delegated work](https://raw.githubusercontent.com/topppg/spiritboard/af56519deaaa15878733616fa9484a9fff2dbefc/docs/media/demo.gif)
 
 Invented sessions and app targets only: no real profiles, tools, credentials or model calls.
 This is an interaction demo, not a performance measurement.
@@ -141,7 +141,7 @@ New harnesses plug in as one module each (see [the source guide](https://github.
   iTerm2, Terminal, VS Code, the ChatGPT, Claude or DeepSeek Harness app), or copy a
   resume command when it is closed.
 
-![Orders cursor pagination session showing open in Ghostty and let it rest beside the latest reply and user request](https://raw.githubusercontent.com/topppg/spiritboard/977436f35176959c7f9c9c429c03aac335861d4e/docs/session-open.png)
+![Orders cursor pagination session showing open in Ghostty and let it rest beside the latest reply and user request](https://raw.githubusercontent.com/topppg/spiritboard/af56519deaaa15878733616fa9484a9fff2dbefc/docs/session-open.png)
 
 <sub>Synthetic session and app target. This turn has finished and has no running subagents.</sub>
 
