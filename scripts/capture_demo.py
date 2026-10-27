@@ -7,15 +7,132 @@ import secrets
 import subprocess
 import tempfile
 import threading
+from contextlib import ExitStack
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
-from spiritboard.sdk import Client
+from spiritboard.sdk import Client, Run
 from spiritboard.server import Collector
 from spiritboard.store import Store
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def seed_board(server: Collector, clients: ExitStack) -> list[Run]:
+    """Label invented SDK runs by harness without reading any native profiles."""
+    scenarios = (
+        (
+            "Claude",
+            "Gateway reconnect",
+            "Fix duplicate listeners after reconnect",
+            "Checking the listener cleanup",
+            "working",
+        ),
+        (
+            "Codex",
+            "Search rehearsal",
+            "Add cursor pagination to search",
+            "Comparing two synthetic result sets",
+            "working",
+        ),
+        (
+            "Codex",
+            "Settings dark mode",
+            "Use theme tokens in the settings panel",
+            "Theme tokens wired; ready for your review",
+            "idle",
+        ),
+        (
+            "opencode",
+            "Upload retries",
+            "Recover from interrupted uploads",
+            "Running the synthetic retry fixture",
+            "working",
+        ),
+        (
+            "opencode",
+            "Release notes",
+            "Group the invented release changes",
+            "Grouped changes into features and fixes",
+            "idle",
+        ),
+        (
+            "Pi",
+            "CLI help text",
+            "Make command help easier to scan",
+            "Checking help output against the fixture",
+            "working",
+        ),
+        (
+            "Pi",
+            "Keyboard navigation",
+            "Add keyboard focus to the agent list",
+            "Choose the focus order for this invented example",
+            "waiting_user",
+        ),
+        (
+            "DeepSeek Harness",
+            "Cache expiry",
+            "Refresh expired entries without duplicate work",
+            "Checking the simulated expiry boundary",
+            "working",
+        ),
+        (
+            "Grok Bot",
+            "Accessibility review",
+            "Review labels and keyboard access",
+            "Review complete; ready for your next direction",
+            "idle",
+        ),
+    )
+    runs: list[Run] = []
+    producers: list[Client] = []
+    for source, name, task, activity, state in scenarios:
+        client = clients.enter_context(Client(server.url, server.token, account="demo"))
+        producers.append(client)
+        root = client.run(name, task, source=source, project="synthetic", demo=True)
+        runs.append(root)
+        root.state(state, activity)
+        if name == "Gateway reconnect":
+            worker = root.child("Docs worker", "Review the invented quick start")
+            runs.append(worker)
+            worker.state("waiting_user", "Choose the wording for this invented example")
+            worker = root.child("Listener audit", "Check every synthetic listener site")
+            runs.append(worker)
+            worker.activity("Checking cleanup after a simulated disconnect")
+            worker = root.child("Test worker", "Check the invented retry fixture")
+            runs.append(worker)
+            worker.activity("Running synthetic fixture checks")
+        if name == "Settings dark mode":
+            worker = root.child("Token audit", "Find colours missing a theme token")
+            worker.finish(summary="All invented colours now use theme tokens")
+        if name == "Upload retries":
+            worker = root.child("Retry worker", "Exercise the synthetic retry fixture")
+            runs.append(worker)
+            worker.activity("Verifying the corrected fixture")
+        if name == "CLI help text":
+            worker = root.child("Help comparison", "Compare synthetic command output")
+            runs.append(worker)
+            worker.activity("Checking the final two command examples")
+        if not client.flush(3):
+            raise RuntimeError("Synthetic SDK delivery failed")
+    started = datetime.now(UTC) - timedelta(minutes=10)
+    for bucket in range(1, 61):
+        stamp = (started + timedelta(seconds=bucket * 10)).isoformat()
+        with (
+            patch("spiritboard.sdk._now", return_value=stamp),
+            patch("spiritboard.store.now", return_value=stamp),
+        ):
+            for index, run in enumerate(runs):
+                for _ in range((bucket * (index + 3) + index) % 4):
+                    run.heartbeat()
+            for client in producers:
+                if not client.flush(3):
+                    raise RuntimeError("Synthetic history delivery failed")
+    return runs
 
 
 def main() -> None:
@@ -31,22 +148,18 @@ def main() -> None:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            with Client(server.url, server.token, account="synthetic-demo") as client:
-                root = client.run(
-                    "Release rehearsal", "Review an invented change", source="SDK", demo=True
-                )
-                root.activity("Coordinating two independent checks")
-                tests = root.child("Test worker", "Check the invented retry fixture")
-                tests.activity("Running synthetic fixture checks")
-                docs = root.child("Docs worker", "Review the invented quick start")
-                docs.state("waiting_user", "Choose the wording for this invented example")
-                docs.activity("Example approval needed · no real action")
-                other = client.run(
-                    "Search rehearsal", "Inspect invented search results", source="SDK", demo=True
-                )
-                other.activity("Comparing two synthetic result sets")
-                if not client.flush(3):
-                    raise RuntimeError("Synthetic SDK delivery failed")
+            with ExitStack() as clients:
+                started = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+                with (
+                    patch("spiritboard.sdk._now", return_value=started),
+                    patch("spiritboard.store.now", return_value=started),
+                ):
+                    runs = seed_board(server, clients)
+                for run in runs:
+                    run.heartbeat()
+                for client in {run.client for run in runs}:
+                    if not client.flush(3):
+                        raise RuntimeError("Synthetic heartbeat delivery failed")
                 subprocess.run(
                     [args.node, str(ROOT / "scripts/capture_demo.cjs"), server.url, str(frames)],
                     check=True,
