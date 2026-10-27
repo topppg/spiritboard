@@ -827,6 +827,30 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  // When the worker settles or disappears, the main agent's own turn/rest status returns.
  delegation([delegator, {...worker, state:'idle'}]);
  assert.equal(statusText('delegator'), '◐ your turn');
+ // Returning to your turn folds settled subagents without opening the detail panel.
+ assert.equal(rowOf('worker'), undefined);
+ assert.equal(detail(), undefined);
+ const delegationFold = () => flatten(rowOf('delegator')).find(x => x.className === 'fold');
+ assert.equal(delegationFold().textContent, '▸ 1 subagent');
+ delegationFold().listeners.click(); await tick();
+ assert.ok(rowOf('worker'));
+ assert.equal(detail(), undefined);
+ delegation([delegator, {...worker, state:'completed'}]);
+ assert.ok(rowOf('worker'));
+ assert.equal(delegationFold().textContent, '▾ 1 subagent');
+ delegationFold().listeners.click(); await tick();
+ assert.equal(rowOf('worker'), undefined);
+ // Opening then closing the parent restores the collapsed default.
+ rowOf('delegator').listeners.click(); await tick();
+ assert.ok(rowOf('worker'));
+ rowOf('delegator').listeners.click(); await tick();
+ assert.equal(rowOf('worker'), undefined);
+ // A subagent asking for input remains visible under a parent whose turn ended.
+ delegation([delegator, {...worker, state:'waiting_user'}]);
+ assert.equal(statusText('delegator'), '◐ your turn');
+ assert.ok(rowOf('worker'));
+ delegation([delegator, {...worker, state:'idle'}]);
+ assert.equal(rowOf('worker'), undefined);
  rowOf('delegator').listeners.click(); await tick();
  control('rest').listeners.click(); await tick();
  assert.equal(statusText('delegator'), '☾ at rest');
