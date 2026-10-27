@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from spiritboard import __version__
 from spiritboard.cli import main, open_dashboard
 
 
@@ -180,7 +181,7 @@ class LauncherCliTests(unittest.TestCase):
         ):
             main(["--version"])
         self.assertEqual(error.exception.code, 0)
-        self.assertIn("Spiritboard 0.2.0", output.getvalue())
+        self.assertIn(f"Spiritboard {__version__}", output.getvalue())
         instance.assert_not_called()
 
     def test_help_still_lists_commands(self):
