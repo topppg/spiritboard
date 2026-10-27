@@ -1,4 +1,4 @@
-"""Capture promotional media using only temporary, invented SDK events."""
+"""Capture promotional media using only temporary, invented agent observations."""
 
 from __future__ import annotations
 
@@ -7,132 +7,264 @@ import secrets
 import subprocess
 import tempfile
 import threading
-from contextlib import ExitStack
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
+from random import Random
 
 from PIL import Image
 
-from spiritboard.sdk import Client, Run
+from spiritboard.focus import UNSUPPORTED, Target
+from spiritboard.model import TERMINAL
 from spiritboard.server import Collector
 from spiritboard.store import Store
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def seed_board(server: Collector, clients: ExitStack) -> list[Run]:
-    """Label invented SDK runs by harness without reading any native profiles."""
+FOCUS_APPS = {
+    "claude": "Ghostty",
+    "codex": "Ghostty",
+    "opencode": "Ghostty",
+    "pi": "Terminal",
+    "dsh": "DeepSeek Harness",
+    "grokbot": "Grok Bot",
+}
+
+
+class CaptureCollector(Collector):
+    """Display invented native sessions without inspecting or activating any app."""
+
+    def snapshot(self, at: float | None = None) -> dict:
+        data = super().snapshot(at)
+        data["mode"] = "demo"
+        data["profiles"] = [
+            {"id": f"media-{kind}", "kind": kind, "label": "demo"} for kind in FOCUS_APPS
+        ]
+        for run in data["runs"]:
+            run["live"] = True if at is None and run["source"] != "grokbot" else None
+        return data
+
+    def focus_target(self, run_id: str) -> Target:
+        run = self.store.run(run_id)
+        if (
+            run
+            and run["session_id"] == f"media-{run['source']}:observed"
+            and run["state"] not in TERMINAL
+        ):
+            return Target("focus", FOCUS_APPS[run["source"]])
+        return UNSUPPORTED
+
+
+def seed_board(store: Store) -> None:
+    """Invent concrete SWE work and its observation history; never read transcripts."""
     scenarios = (
         (
-            "Claude",
-            "Gateway reconnect",
-            "Fix duplicate listeners after reconnect",
-            "Checking the listener cleanup",
-            "working",
-        ),
-        (
-            "Codex",
-            "Search rehearsal",
-            "Add cursor pagination to search",
-            "Comparing two synthetic result sets",
-            "working",
-        ),
-        (
-            "Codex",
-            "Settings dark mode",
-            "Use theme tokens in the settings panel",
-            "Theme tokens wired; ready for your review",
+            "orders",
+            "codex",
+            "Orders cursor pagination",
+            "Add keyset pagination to GET /orders. Preserve filters and cover tied "
+            "created_at values.",
+            "Cursor pagination is ready; 24 tests pass, including tied timestamps.",
             "idle",
+            "harbor-api",
+            None,
         ),
         (
-            "opencode",
-            "Upload retries",
-            "Recover from interrupted uploads",
-            "Running the synthetic retry fixture",
-            "working",
-        ),
-        (
-            "opencode",
-            "Release notes",
-            "Group the invented release changes",
-            "Grouped changes into features and fixes",
+            "reconnect",
+            "claude",
+            "WebSocket listener leak",
+            "Fix retained room listeners after reconnect; delegate the call-site audit "
+            "and soak test.",
+            "Fixed disconnect cleanup; testing 5,000 reconnects for retained listeners.",
             "idle",
+            "relay-chat",
+            None,
         ),
         (
-            "Pi",
-            "CLI help text",
-            "Make command help easier to scan",
-            "Checking help output against the fixture",
+            "staging",
+            "claude",
+            "Reconnect regression test",
+            "Add a regression for room cleanup after reconnect; verify listener counts "
+            "after disconnect.",
+            "Added a reconnect regression; checking listener counts after disconnect.",
+            "waiting_tool",
+            "relay-chat",
+            "reconnect",
+        ),
+        (
+            "listeners",
+            "claude",
+            "Listener call-site audit",
+            "Audit room listeners in socket.ts and typing.ts; replace per-room handlers "
+            "where needed.",
+            "Found a second leak in typing.ts; removing its per-room listener.",
             "working",
+            "relay-chat",
+            "reconnect",
         ),
         (
-            "Pi",
-            "Keyboard navigation",
-            "Add keyboard focus to the agent list",
-            "Choose the focus order for this invented example",
+            "soak",
+            "claude",
+            "5,000-reconnect soak test",
+            "Add a regression that reconnects 5,000 times and compares retained heap "
+            "after collection.",
+            "3,800 of 5,000 reconnects checked; retained heap is flat.",
+            "working",
+            "relay-chat",
+            "reconnect",
+        ),
+        (
+            "currency",
+            "claude",
+            "Invoice currency backfill",
+            "Backfill invoice_currency from ledger entries; report unmatched accounts "
+            "before writing.",
+            "Dry run checked 41k invoices. Please review the backfill before I apply it.",
+            "idle",
+            "harbor-billing",
+            None,
+        ),
+        (
+            "upload",
+            "opencode",
+            "Flaky upload retry test",
+            "Reproduce the upload test flake with a fake clock; fix the retry-timer race.",
+            "Reproduced the retry-timer race; rerunning the upload test 100 times.",
+            "working",
+            "ingest-worker",
+            None,
+        ),
+        (
+            "retry",
+            "opencode",
+            "Retry queue audit",
+            "Check abort cleanup and make a 503 response enqueue exactly one retry job.",
+            "Abort cleanup is patched; checking that a 503 queues only one retry.",
+            "working",
+            "ingest-worker",
+            "upload",
+        ),
+        (
+            "tokens",
+            "codex",
+            "Theme token cleanup",
+            "Replace hard-coded settings colours with theme tokens and check contrast in "
+            "both themes.",
+            "Replaced hard-coded colours; both themes pass contrast checks.",
+            "idle",
+            "atlas-web",
+            None,
+        ),
+        (
+            "contrast",
+            "codex",
+            "Theme contrast checks",
+            "",
+            "Focus rings and labels pass contrast checks in both themes.",
+            "idle",
+            "atlas-web",
+            "tokens",
+        ),
+        (
+            "json",
+            "pi",
+            "CLI JSON output",
+            "Add --json output to every inspect command; keep diagnostics on stderr.",
+            "7 of 9 commands return JSON; fixing the deploy-status snapshot.",
+            "working",
+            "forge-cli",
+            None,
+        ),
+        (
+            "snapshots",
+            "pi",
+            "CLI snapshot review",
+            "Check stdout snapshots for every --json command and keep warnings on stderr.",
+            "Moving warnings to stderr so --json stdout stays valid JSON.",
+            "working",
+            "forge-cli",
+            None,
+        ),
+        (
+            "oauth",
+            "pi",
+            "OAuth redirect validation",
+            "Restrict callback redirects to the configured origin; cover encoded and "
+            "mixed-case URLs.",
+            "Redirect tests pass. Should localhost aliases stay in the allowlist?",
+            "idle",
+            "atlas-auth",
+            None,
+        ),
+        (
+            "cache",
+            "dsh",
+            "Cache load-test approval",
+            "Add single-flight cache refresh; benchmark 200 concurrent readers at the "
+            "expiry boundary.",
+            "Approval requested",
             "waiting_user",
+            "harbor-api",
+            None,
         ),
         (
-            "DeepSeek Harness",
-            "Cache expiry",
-            "Refresh expired entries without duplicate work",
-            "Checking the simulated expiry boundary",
-            "working",
-        ),
-        (
-            "Grok Bot",
-            "Accessibility review",
-            "Review labels and keyboard access",
-            "Review complete; ready for your next direction",
-            "idle",
+            "index",
+            "grokbot",
+            "Orders index rollout",
+            "Review the concurrent orders index migration and compare EXPLAIN plans for "
+            "list queries.",
+            "Should I roll out the concurrent index after the query-plan check?",
+            "waiting_user",
+            "",
+            None,
         ),
     )
-    runs: list[Run] = []
-    producers: list[Client] = []
-    for source, name, task, activity, state in scenarios:
-        client = clients.enter_context(Client(server.url, server.token, account="demo"))
-        producers.append(client)
-        root = client.run(name, task, source=source, project="synthetic", demo=True)
-        runs.append(root)
-        root.state(state, activity)
-        if name == "Gateway reconnect":
-            worker = root.child("Docs worker", "Review the invented quick start")
-            runs.append(worker)
-            worker.state("waiting_user", "Choose the wording for this invented example")
-            worker = root.child("Listener audit", "Check every synthetic listener site")
-            runs.append(worker)
-            worker.activity("Checking cleanup after a simulated disconnect")
-            worker = root.child("Test worker", "Check the invented retry fixture")
-            runs.append(worker)
-            worker.activity("Running synthetic fixture checks")
-        if name == "Settings dark mode":
-            worker = root.child("Token audit", "Find colours missing a theme token")
-            worker.finish(summary="All invented colours now use theme tokens")
-        if name == "Upload retries":
-            worker = root.child("Retry worker", "Exercise the synthetic retry fixture")
-            runs.append(worker)
-            worker.activity("Verifying the corrected fixture")
-        if name == "CLI help text":
-            worker = root.child("Help comparison", "Compare synthetic command output")
-            runs.append(worker)
-            worker.activity("Checking the final two command examples")
-        if not client.flush(3):
-            raise RuntimeError("Synthetic SDK delivery failed")
     started = datetime.now(UTC) - timedelta(minutes=10)
-    for bucket in range(1, 61):
-        stamp = (started + timedelta(seconds=bucket * 10)).isoformat()
-        with (
-            patch("spiritboard.sdk._now", return_value=stamp),
-            patch("spiritboard.store.now", return_value=stamp),
-        ):
-            for index, run in enumerate(runs):
-                for _ in range((bucket * (index + 3) + index) % 4):
-                    run.heartbeat()
-            for client in producers:
-                if not client.flush(3):
-                    raise RuntimeError("Synthetic history delivery failed")
-    return runs
+    observations: list[dict[str, str | None]] = []
+    for key, kind, name, task, activity, state, project, parent in scenarios:
+        observation = {
+            "run_id": f"media-{kind}:{key}",
+            "session_id": f"media-{kind}:observed",
+            "native_id": key,
+            "parent_run_id": f"media-{kind}:{parent}" if parent else None,
+            "source": kind,
+            "account": "demo",
+            "name": name,
+            "task": task,
+            "activity": activity,
+            "state": state,
+            "project": project,
+            "started_at": started.isoformat(),
+            "evidence": "invented observation for promotional media",
+        }
+        observations.append(observation)
+    random = Random(81)
+    history: list[tuple[float, dict[str, str | None]]] = []
+    for observation in observations:
+        store.observe({**observation, "state": "working", "last_seen": started.isoformat()})
+        for _ in range(random.randint(8, 24)):
+            history.append((random.uniform(0, 598), observation))
+    for _ in range(9):
+        center = random.uniform(15, 580)
+        spread = random.uniform(3, 16)
+        for kind in random.sample(list(FOCUS_APPS), random.randint(1, 4)):
+            workers = [item for item in observations if item["source"] == kind]
+            peak = center + random.uniform(-12, 12)
+            for _ in range(random.randint(14, 55)):
+                offset = random.gauss(peak, spread)
+                if 0 <= offset < 599:
+                    history.append((offset, random.choice(workers)))
+    for offset, observation in sorted(history, key=lambda item: item[0]):
+        store.observe(
+            {
+                **observation,
+                "state": "working",
+                "last_seen": (started + timedelta(seconds=offset)).isoformat(),
+            }
+        )
+    current = datetime.now(UTC).isoformat()
+    for observation in observations:
+        store.observe({**observation, "last_seen": current})
 
 
 def main() -> None:
@@ -144,28 +276,17 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="spiritboard-media-") as temporary:
         frames = Path(temporary)
         store = Store(frames / "events.sqlite3", stale_after=120)
-        server = Collector(store, secrets.token_urlsafe(32), port=0)
+        seed_board(store)
+        server = CaptureCollector(store, secrets.token_urlsafe(32), port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            with ExitStack() as clients:
-                started = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
-                with (
-                    patch("spiritboard.sdk._now", return_value=started),
-                    patch("spiritboard.store.now", return_value=started),
-                ):
-                    runs = seed_board(server, clients)
-                for run in runs:
-                    run.heartbeat()
-                for client in {run.client for run in runs}:
-                    if not client.flush(3):
-                        raise RuntimeError("Synthetic heartbeat delivery failed")
-                subprocess.run(
-                    [args.node, str(ROOT / "scripts/capture_demo.cjs"), server.url, str(frames)],
-                    check=True,
-                    cwd=ROOT,
-                    timeout=120,
-                )
+            subprocess.run(
+                [args.node, str(ROOT / "scripts/capture_demo.cjs"), server.url, str(frames)],
+                check=True,
+                cwd=ROOT,
+                timeout=120,
+            )
         finally:
             server.stopping.set()
             server.shutdown()

@@ -146,6 +146,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 32px; display: flex; fle
 .row-open:hover { color: var(--bright); background: #ffffff14; }
 .row-open.failed { background: var(--table); font-size: var(--fs-xs); white-space: nowrap; }
 .status { font-weight: 500; color: var(--soft); }
+.status .glyph { display: inline-block; width: 1em; text-align: center; }
 .status.g-needs { color: var(--wait); }
 .status.g-failed { color: var(--err); }
 .status.g-running .glyph { color: var(--run); } .status.g-rest .glyph { color: var(--rest); }
