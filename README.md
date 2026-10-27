@@ -14,9 +14,9 @@ waiting for you or gone, and a button that takes you straight to it.
 It only reads what the agents already write to disk. It never starts, steers or
 stops an agent, and nothing leaves your machine unless you turn on summaries.
 
-![Spiritboard showing six synthetic harnesses, subagents, attention states and event history](https://raw.githubusercontent.com/topppg/spiritboard/8088b83e8a8d7f1e50ad359955437575efacc4b3/docs/dashboard.png)
+![Synthetic SWE sessions with running parent and subagent rows, and an expanded session showing open in Ghostty and let it rest](https://raw.githubusercontent.com/topppg/spiritboard/977436f35176959c7f9c9c429c03aac335861d4e/docs/dashboard.png)
 
-<sub>Synthetic data: invented sessions, projects and activity.</sub>
+<sub>Synthetic data: invented software engineering sessions, projects, activity and app targets.</sub>
 
 ## Quick start
 
@@ -54,11 +54,11 @@ model. Add `--no-open` to either command to print the URL without launching a br
 AI summaries are optional and stay off unless you enable them.
 
 <details>
-<summary>Watch a 10-second tour: attention filters, subagents and task search</summary>
+<summary>Watch a 10-second tour: attention filters, session actions and task search</summary>
 
-![A synthetic Spiritboard demo filtering agents that need attention, opening a subagent's details, and searching tasks](https://raw.githubusercontent.com/topppg/spiritboard/8088b83e8a8d7f1e50ad359955437575efacc4b3/docs/media/demo.gif)
+![A synthetic demo filtering agents that need attention, showing session actions, letting a finished turn rest, and searching delegated work](https://raw.githubusercontent.com/topppg/spiritboard/977436f35176959c7f9c9c429c03aac335861d4e/docs/media/demo.gif)
 
-Invented SDK sessions only: no real profiles, tools, credentials or model calls.
+Invented sessions and app targets only: no real profiles, tools, credentials or model calls.
 This is an interaction demo, not a performance measurement.
 
 </details>
@@ -141,9 +141,9 @@ New harnesses plug in as one module each (see [the source guide](https://github.
   iTerm2, Terminal, VS Code, the ChatGPT, Claude or DeepSeek Harness app), or copy a
   resume command when it is closed.
 
-![An expanded synthetic session showing its harness, project, latest activity and your request](https://raw.githubusercontent.com/topppg/spiritboard/8088b83e8a8d7f1e50ad359955437575efacc4b3/docs/session-open.png)
+![Orders cursor pagination session showing open in Ghostty and let it rest beside the latest reply and user request](https://raw.githubusercontent.com/topppg/spiritboard/977436f35176959c7f9c9c429c03aac335861d4e/docs/session-open.png)
 
-<sub>Synthetic data: invented sessions, projects and activity.</sub>
+<sub>Synthetic session and app target. This turn has finished and has no running subagents.</sub>
 
 Click a row to open it in place; `/` finds, `j`/`k` move between top-level agents, `Esc` closes, `a` / `w`
 / `e` switch between active, needs-you and all, `r` lets the open session's
