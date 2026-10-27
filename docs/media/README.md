@@ -38,11 +38,19 @@ Profiles, liveness, app targets, projects, requests, and replies are all synthet
 capture-only collector returns harmless app targets with no activation commands so the
 real UI can display its **open** buttons without inspecting or launching any app. Browser
 capture also rejects non-GET requests. The script seeds ten minutes of invented observation
-history to fill the chart; it does not record real activity. Summaries remain off.
+history with a fixed random seed: independent bursts, uneven peaks, jittered timestamps,
+and quiet gaps. It does not record real activity. Summaries remain off.
+
+Fixtures follow native adapter output: terminal/editor names appear only in focus targets,
+not desktop-app badges. Claude and Pi questions end in **your turn**; DeepSeek approvals
+and Grok prompts can show **needs you**. Pi sessions have no inferred parent, Codex turn
+completion stays idle, and Grok has no project or known process liveness.
 
 Capture assertions require both session actions to be visible and enabled, and check that
 parents with running workers say **running**, never **your turn**. The expanded finished-turn
 session has no running children and legitimately offers **let it rest**.
+Real-browser geometry checks also require status symbols and text to align at the same
+tree depth. Subagents retain the product's normal indentation.
 
 Fifty sampled dashboard frames play at 200 ms each (5 fps), totaling exactly 10 seconds.
 This is an interaction demonstration, not a real-time performance measurement.

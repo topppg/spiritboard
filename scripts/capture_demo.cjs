@@ -26,6 +26,16 @@ const { pathToFileURL } = require("node:url");
     await page.locator("#demo-banner").waitFor({ state: "visible" });
     await page.evaluate(() => document.fonts.ready);
     await page.setViewportSize({ width: 1440, height: 1040 });
+    assert.equal(await page.locator(".app-note").count(), 0);
+    const statuses = await page.locator(".run-row:not(.sub) .status").evaluateAll((cells) => cells.map((cell) => {
+      const glyph = cell.querySelector(".glyph").getBoundingClientRect();
+      const text = [...cell.childNodes].find((node) => node.nodeType === Node.TEXT_NODE);
+      const range = document.createRange();
+      range.setStart(text, 1); range.setEnd(text, text.textContent.length);
+      return { label: text.textContent.trim(), glyph: glyph.x, text: range.getBoundingClientRect().x };
+    }));
+    assert.equal(new Set(statuses.map((status) => status.glyph)).size, 1, "Status symbols must align");
+    assert.equal(new Set(statuses.map((status) => status.text)).size, 1, "Status labels must align");
     const row = (id) => page.locator(`.run-row[data-run-id="${id}"]`);
     for (const id of ["media-claude:reconnect", "media-opencode:upload", "media-pi:json"]) {
       assert.match(await row(id).innerText(), /running/);

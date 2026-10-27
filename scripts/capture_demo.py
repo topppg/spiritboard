@@ -9,6 +9,7 @@ import tempfile
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from random import Random
 
 from PIL import Image
 
@@ -20,8 +21,8 @@ from spiritboard.store import Store
 ROOT = Path(__file__).resolve().parents[1]
 
 
-APPS = {
-    "claude": "VS Code",
+FOCUS_APPS = {
+    "claude": "Ghostty",
     "codex": "Ghostty",
     "opencode": "Ghostty",
     "pi": "Terminal",
@@ -36,9 +37,11 @@ class CaptureCollector(Collector):
     def snapshot(self, at: float | None = None) -> dict:
         data = super().snapshot(at)
         data["mode"] = "demo"
-        data["profiles"] = [{"id": f"media-{kind}", "kind": kind, "label": "demo"} for kind in APPS]
+        data["profiles"] = [
+            {"id": f"media-{kind}", "kind": kind, "label": "demo"} for kind in FOCUS_APPS
+        ]
         for run in data["runs"]:
-            run["live"] = True if at is None else None
+            run["live"] = True if at is None and run["source"] != "grokbot" else None
         return data
 
     def focus_target(self, run_id: str) -> Target:
@@ -48,7 +51,7 @@ class CaptureCollector(Collector):
             and run["session_id"] == f"media-{run['source']}:observed"
             and run["state"] not in TERMINAL
         ):
-            return Target("focus", APPS[run["source"]])
+            return Target("focus", FOCUS_APPS[run["source"]])
         return UNSUPPORTED
 
 
@@ -59,10 +62,9 @@ def seed_board(store: Store) -> None:
             "orders",
             "codex",
             "Orders cursor pagination",
-            "Add keyset pagination to GET /orders. Preserve filters and cover "
-            "tied created_at values.",
-            "24 tests pass, including tied timestamps; review the cursor shape "
-            "before I update OpenAPI.",
+            "Add keyset pagination to GET /orders. Preserve filters and cover tied "
+            "created_at values.",
+            "Cursor pagination is ready; 24 tests pass, including tied timestamps.",
             "idle",
             "harbor-api",
             None,
@@ -71,10 +73,9 @@ def seed_board(store: Store) -> None:
             "reconnect",
             "claude",
             "WebSocket listener leak",
-            "Fix retained room listeners after reconnect; delegate the call-site "
-            "audit and soak test.",
-            "Disconnect cleanup patched; soak worker is measuring heap growth "
-            "across 5,000 reconnects.",
+            "Fix retained room listeners after reconnect; delegate the call-site audit "
+            "and soak test.",
+            "Fixed disconnect cleanup; testing 5,000 reconnects for retained listeners.",
             "idle",
             "relay-chat",
             None,
@@ -82,11 +83,11 @@ def seed_board(store: Store) -> None:
         (
             "staging",
             "claude",
-            "Staging write-test approval",
-            "Verify room cleanup against the seeded staging database after the soak test.",
-            "Dry run targets only seeded rooms; need approval before running the "
-            "staging write test.",
-            "waiting_user",
+            "Reconnect regression test",
+            "Add a regression for room cleanup after reconnect; verify listener counts "
+            "after disconnect.",
+            "Added a reconnect regression; checking listener counts after disconnect.",
+            "waiting_tool",
             "relay-chat",
             "reconnect",
         ),
@@ -94,10 +95,9 @@ def seed_board(store: Store) -> None:
             "listeners",
             "claude",
             "Listener call-site audit",
-            "Audit room listeners in socket.ts and typing.ts; replace per-room "
-            "handlers where needed.",
-            "Found the same leak in typing.ts; replacing its per-room listener "
-            "with one shared handler.",
+            "Audit room listeners in socket.ts and typing.ts; replace per-room handlers "
+            "where needed.",
+            "Found a second leak in typing.ts; removing its per-room listener.",
             "working",
             "relay-chat",
             "reconnect",
@@ -106,9 +106,9 @@ def seed_board(store: Store) -> None:
             "soak",
             "claude",
             "5,000-reconnect soak test",
-            "Add a regression that reconnects 5,000 times and compares retained "
-            "heap after collection.",
-            "Baseline retained 18 MB; patched run is on reconnect 3,800/5,000 with a flat heap.",
+            "Add a regression that reconnects 5,000 times and compares retained heap "
+            "after collection.",
+            "3,800 of 5,000 reconnects checked; retained heap is flat.",
             "working",
             "relay-chat",
             "reconnect",
@@ -117,10 +117,10 @@ def seed_board(store: Store) -> None:
             "currency",
             "claude",
             "Invoice currency backfill",
-            "Backfill invoice_currency from ledger entries; report unmatched "
-            "accounts before writing.",
-            "Dry run covers 41k invoices with no unmatched accounts; approve the backfill plan.",
-            "waiting_user",
+            "Backfill invoice_currency from ledger entries; report unmatched accounts "
+            "before writing.",
+            "Dry run checked 41k invoices. Please review the backfill before I apply it.",
+            "idle",
             "harbor-billing",
             None,
         ),
@@ -129,8 +129,7 @@ def seed_board(store: Store) -> None:
             "opencode",
             "Flaky upload retry test",
             "Reproduce the upload test flake with a fake clock; fix the retry-timer race.",
-            "Fake clock exposed a retry-timer race; patch is rerunning the "
-            "chunk-upload test 100 times.",
+            "Reproduced the retry-timer race; rerunning the upload test 100 times.",
             "working",
             "ingest-worker",
             None,
@@ -140,7 +139,7 @@ def seed_board(store: Store) -> None:
             "opencode",
             "Retry queue audit",
             "Check abort cleanup and make a 503 response enqueue exactly one retry job.",
-            "Cleared timers on abort; checking that a 503 response creates only one retry job.",
+            "Abort cleanup is patched; checking that a 503 queues only one retry.",
             "working",
             "ingest-worker",
             "upload",
@@ -149,10 +148,9 @@ def seed_board(store: Store) -> None:
             "tokens",
             "codex",
             "Theme token cleanup",
-            "Replace hard-coded settings colours with theme tokens and check "
-            "contrast in both themes.",
-            "Settings now use theme tokens; contrast checks pass in both themes "
-            "and screenshots match.",
+            "Replace hard-coded settings colours with theme tokens and check contrast in "
+            "both themes.",
+            "Replaced hard-coded colours; both themes pass contrast checks.",
             "idle",
             "atlas-web",
             None,
@@ -161,9 +159,9 @@ def seed_board(store: Store) -> None:
             "contrast",
             "codex",
             "Theme contrast checks",
-            "Verify focus rings and labels meet contrast targets in light and dark mode.",
+            "",
             "Focus rings and labels pass contrast checks in both themes.",
-            "completed",
+            "idle",
             "atlas-web",
             "tokens",
         ),
@@ -172,7 +170,7 @@ def seed_board(store: Store) -> None:
             "pi",
             "CLI JSON output",
             "Add --json output to every inspect command; keep diagnostics on stderr.",
-            "7/9 commands emit stable JSON; fixing snapshot tests for deploy status.",
+            "7 of 9 commands return JSON; fixing the deploy-status snapshot.",
             "working",
             "forge-cli",
             None,
@@ -182,32 +180,30 @@ def seed_board(store: Store) -> None:
             "pi",
             "CLI snapshot review",
             "Check stdout snapshots for every --json command and keep warnings on stderr.",
-            "Two commands still mix warnings into stdout; moving those messages to stderr.",
+            "Moving warnings to stderr so --json stdout stays valid JSON.",
             "working",
             "forge-cli",
-            "json",
+            None,
         ),
         (
             "oauth",
             "pi",
             "OAuth redirect validation",
-            "Restrict callback redirects to the configured origin; cover encoded "
-            "and mixed-case URLs.",
-            "Encoded-host cases pass; choose whether localhost aliases belong in "
-            "the redirect allowlist.",
-            "waiting_user",
+            "Restrict callback redirects to the configured origin; cover encoded and "
+            "mixed-case URLs.",
+            "Redirect tests pass. Should localhost aliases stay in the allowlist?",
+            "idle",
             "atlas-auth",
             None,
         ),
         (
             "cache",
             "dsh",
-            "Redis cache stampede",
-            "Add single-flight cache refresh; benchmark 200 concurrent readers "
-            "at the expiry boundary.",
-            "Single-flight refresh added; load test is checking p95 latency with "
-            "200 concurrent readers.",
-            "working",
+            "Cache load-test approval",
+            "Add single-flight cache refresh; benchmark 200 concurrent readers at the "
+            "expiry boundary.",
+            "Approval requested",
+            "waiting_user",
             "harbor-api",
             None,
         ),
@@ -215,12 +211,11 @@ def seed_board(store: Store) -> None:
             "index",
             "grokbot",
             "Orders index rollout",
-            "Review the concurrent orders index migration and compare EXPLAIN "
-            "plans for list queries.",
-            "EXPLAIN uses orders_created_at_id_idx; review the query plan before "
-            "merging the migration.",
-            "idle",
-            "harbor-api",
+            "Review the concurrent orders index migration and compare EXPLAIN plans for "
+            "list queries.",
+            "Should I roll out the concurrent index after the query-plan check?",
+            "waiting_user",
+            "",
             None,
         ),
     )
@@ -240,17 +235,33 @@ def seed_board(store: Store) -> None:
             "state": state,
             "project": project,
             "started_at": started.isoformat(),
-            "app": APPS[kind],
             "evidence": "invented observation for promotional media",
         }
         observations.append(observation)
-    for bucket in range(60):
-        stamp = started + timedelta(seconds=bucket * 10)
-        for index, observation in enumerate(observations):
-            for offset in range((bucket * (index + 3) + index) % 4):
-                store.observe(
-                    {**observation, "last_seen": (stamp + timedelta(seconds=offset)).isoformat()}
-                )
+    random = Random(81)
+    history: list[tuple[float, dict[str, str | None]]] = []
+    for observation in observations:
+        store.observe({**observation, "state": "working", "last_seen": started.isoformat()})
+        for _ in range(random.randint(8, 24)):
+            history.append((random.uniform(0, 598), observation))
+    for _ in range(9):
+        center = random.uniform(15, 580)
+        spread = random.uniform(3, 16)
+        for kind in random.sample(list(FOCUS_APPS), random.randint(1, 4)):
+            workers = [item for item in observations if item["source"] == kind]
+            peak = center + random.uniform(-12, 12)
+            for _ in range(random.randint(14, 55)):
+                offset = random.gauss(peak, spread)
+                if 0 <= offset < 599:
+                    history.append((offset, random.choice(workers)))
+    for offset, observation in sorted(history, key=lambda item: item[0]):
+        store.observe(
+            {
+                **observation,
+                "state": "working",
+                "last_seen": (started + timedelta(seconds=offset)).isoformat(),
+            }
+        )
     current = datetime.now(UTC).isoformat()
     for observation in observations:
         store.observe({**observation, "last_seen": current})
