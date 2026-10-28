@@ -103,6 +103,7 @@ def parse(profile: SourceProfile, rows: list[dict], mtime: float) -> dict | None
     prompt_seen = False
     last_reply = ""
     custom_title = ai_title = ""
+    pending_input: dict[str, str] = {}
     for row in rows:
         stamp = utc_time(row.get("timestamp"))
         if stamp and (out["last_seen"] is None or stamp > out["last_seen"]):
@@ -112,9 +113,16 @@ def parse(profile: SourceProfile, rows: list[dict], mtime: float) -> dict | None
             # The header's request and reply predate the unread middle; the scan searches back.
             # A subagent keeps its first prompt, which is the task its parent gave it.
             last_reply = ""
+            pending_input.clear()
+            out.update(
+                state="unknown",
+                activity="Transcript gap · current state unknown",
+                evidence="Claude transcript: unread middle; current state unknown",
+            )
             if not agent:
                 out["task"] = TEXT_HIDDEN
             continue
+        current = stamp is None or last_state_time is None or stamp >= last_state_time
         state, activity, evidence = None, None, None
         if kind == "custom-title":
             custom_title = safe(row.get("customTitle"), 120) or custom_title
@@ -125,6 +133,22 @@ def parse(profile: SourceProfile, rows: list[dict], mtime: float) -> dict | None
             result = isinstance(content, list) and any(
                 isinstance(x, dict) and x.get("type") == "tool_result" for x in content
             )
+            if current:
+                if result:
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "tool_result":
+                            pending_input.pop(native_id(block.get("tool_use_id")), None)
+                elif not (row.get("isMeta") or row.get("isCompactSummary")) and (
+                    request_text(content, 1)
+                    or (
+                        isinstance(content, list)
+                        and any(
+                            isinstance(block, dict) and block.get("type") == "image"
+                            for block in content
+                        )
+                    )
+                ):
+                    pending_input.clear()
             state, evidence = "working", "user/tool_result" if result else "user"
             activity = (last_reply or "Tool result recorded") if result else "User turn recorded"
             # Skill bodies, compaction summaries and command echoes are not requests.
@@ -146,18 +170,38 @@ def parse(profile: SourceProfile, rows: list[dict], mtime: float) -> dict | None
             if profile.include_text:
                 last_reply = reply_text(content) or last_reply
             if stop in {"end_turn", "stop_sequence", "max_tokens"}:
+                if current:
+                    pending_input.clear()
                 state, evidence = "idle", "assistant stop_reason"
                 activity = last_reply or "Turn ended · session may resume"
             elif tool or stop == "tool_use":
+                if current and isinstance(content, list):
+                    for block in content:
+                        if (
+                            isinstance(block, dict)
+                            and block.get("type") == "tool_use"
+                            and block.get("name") in ("AskUserQuestion", "ExitPlanMode")
+                            and (request_id := native_id(block.get("id")))
+                        ):
+                            pending_input[request_id] = block["name"]
                 state, evidence = "waiting_tool", "assistant tool_use"
                 activity = last_reply or "Tool call recorded"
             else:
                 state, evidence = "working", "assistant"
                 activity = last_reply or "Model activity recorded"
         elif kind == "system" and row.get("subtype") == "turn_duration":
+            if current:
+                pending_input.clear()
             state, evidence = "idle", "turn_duration"
             activity = last_reply or "Turn ended · session may resume"
-        if state and (stamp is None or last_state_time is None or stamp >= last_state_time):
+        if state and current:
+            if pending_input:
+                state, evidence = "waiting_user", "unanswered interactive tool"
+                activity = (
+                    "Question awaiting your reply"
+                    if "AskUserQuestion" in pending_input.values()
+                    else "Plan awaiting approval"
+                )
             out.update(
                 state=state,
                 activity=activity,
@@ -169,6 +213,8 @@ def parse(profile: SourceProfile, rows: list[dict], mtime: float) -> dict | None
         out["name"] = custom_title or ai_title
         if custom_title:
             out["title_source"] = "user"
+    if 0 < len(pending_input) <= 64:
+        out["input_request_ids"] = ["tool:" + identity for identity in pending_input]
     out["last_seen"] = out["last_seen"] or mtime_iso(mtime)
     return out
 

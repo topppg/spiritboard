@@ -213,7 +213,39 @@ class GrokBotTests(unittest.TestCase):
         self.assertEqual(hidden[ALPHA]["activity"], "Question asked")
         self.replica(ALPHA, widget(1, "Which city?", NOW - 48 * HOUR))
         runs, _ = self.scan()
-        self.assertEqual(runs[ALPHA]["state"], "idle")
+        self.assertEqual(runs[ALPHA]["state"], "waiting_user")
+
+    def test_unresolved_question_survives_unrelated_agent_activity(self):
+        self.roster(agent(ALPHA, "A"))
+        self.replica(
+            ALPHA,
+            widget(1, "Which city?", NOW - 48 * HOUR),
+            reply(2, "I also found another venue", NOW),
+            event(3, NOW),
+        )
+        runs, _ = self.scan()
+        self.assertEqual(runs[ALPHA]["state"], "waiting_user")
+        self.assertEqual(runs[ALPHA]["activity"], "Which city?")
+
+    def test_free_text_followup_does_not_resolve_a_widget(self):
+        self.roster(agent(ALPHA, "A"))
+        self.replica(
+            ALPHA,
+            widget(1, "Which city?", NOW - HOUR),
+            user(2, "Also check parking", NOW),
+        )
+        runs, _ = self.scan()
+        self.assertEqual(runs[ALPHA]["state"], "waiting_user")
+
+    def test_explicit_question_resolution_restores_recorded_activity(self):
+        self.roster(agent(ALPHA, "A"))
+        self.replica(
+            ALPHA,
+            widget(1, "Which city?", NOW - HOUR, widgetSkipped=True),
+            user(2, "Choose for me", NOW),
+        )
+        runs, _ = self.scan()
+        self.assertEqual(runs[ALPHA]["state"], "working")
 
     def test_text_hidden_profile_keeps_generic_labels(self):
         self.roster(agent(ALPHA, "Private name"))

@@ -643,7 +643,7 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  assert.ok(flatten(detail()).some(x => x.className === 'was' && x.textContent === 'was: Tune retry limits'));
  rows().find(r => r.dataset.runId === 'evolved').listeners.click(); await tick();
  assert.ok(flatten(deskRow).some(x => x.className === 'note app-note' && x.textContent === 'Claude desktop'));
- assert.equal(flatten(deskRow).find(x => x.className === 'cell agent').title, 'Claude · personal · Claude desktop');
+ assert.equal(flatten(deskRow).find(x => x.className === 'cell agent').title, 'Claude · personal · Claude desktop · Input detection: Transcript only · unrecorded questions or approvals may be missed');
  assert.equal(rows().find(r => r.dataset.runId === 'shelved'), undefined);
  assert.ok(ids.counts.textContent.includes('1 needs you'));
  deskRow.listeners.click(); await tick();
@@ -897,6 +897,43 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  docListeners.keydown({key:'L', target:{tagName:'BODY'}, preventDefault(){}}); await tick();
  assert.equal(statusText('delegator'), '☾ at rest');
  past.runs = pastRuns;
+ stream.listeners.snapshot({data:JSON.stringify(snapshot)}); await tick();
+ // Silence cannot establish that no question or approval is waiting in another interface.
+ const uncertain = run('uncertain', null, 'Uncertain', {state:'waiting_tool', health:'stale', live:true, last_seen:twoHours});
+ const coverageSnapshot = (coverage, agents) => ({...snapshot, runs:agents, profiles:snapshot.profiles.map(p => p.id === 'codex-work' ? {...p, input_detection:coverage} : p)});
+ stream.listeners.snapshot({data:JSON.stringify(coverageSnapshot('configured', [uncertain]))}); await tick();
+ docListeners.keydown({key:'a', target:{tagName:'BODY'}, preventDefault(){}});
+ assert.equal(rowOf('uncertain'), undefined);
+ docListeners.keydown({key:'e', target:{tagName:'BODY'}, preventDefault(){}});
+ assert.equal(statusText('uncertain'), '? status unknown');
+ assert.ok(!rowOf('uncertain').textContent.includes('quiet'));
+ assert.ok(flatten(rowOf('uncertain')).find(x => (x.className || '').startsWith('cell status')).title.includes('may be pending'));
+ assert.ok(flatten(rowOf('uncertain')).find(x => x.className === 'cell agent').title.includes('waiting for first event'));
+ rowOf('uncertain').listeners.click(); await tick();
+ assert.ok(detail().textContent.includes('input detection'));
+ assert.ok(detail().textContent.includes('Configured · waiting for first event'));
+ // Coverage remains visible without adding a global warning for every source.
+ assert.ok(!ids['source-errors'].textContent.includes('input detection'));
+ const codexOption = () => ids['harness-filter'].children.find(o => o.value === 'profile:codex-work');
+ assert.ok(codexOption().title.includes('waiting for first event'));
+ stream.listeners.snapshot({data:JSON.stringify(coverageSnapshot('transcript only', [uncertain]))}); await tick();
+ assert.ok(detail().textContent.includes('unrecorded questions or approvals may be missed'));
+ assert.ok(codexOption().title.includes('Transcript only'));
+ stream.listeners.snapshot({data:JSON.stringify(coverageSnapshot('transcript only', [{...uncertain,last_seen:now}]))}); await tick();
+ assert.ok(ids.counts.textContent.includes('1 status unknown'));
+ assert.ok(!ids.counts.textContent.includes('running') && !ids.counts.textContent.includes('quiet'));
+ // Pending input remains actionable regardless of transcript age and liveness discovery support.
+ const oldInput = run('old-input', null, 'Old input', {state:'waiting_user', health:'stale', last_seen:new Date(Date.parse(now) - 2 * 3600000).toISOString(), input_status:{observed_at:now,pending:1}});
+ stream.listeners.snapshot({data:JSON.stringify(coverageSnapshot('events observed', [oldInput]))}); await tick();
+ docListeners.keydown({key:'w', target:{tagName:'BODY'}, preventDefault(){}});
+ assert.deepEqual(rows().map(r => r.dataset.runId), ['old-input']);
+ assert.equal(statusText('old-input'), '◐ needs you');
+ assert.equal(flatten(rowOf('old-input')).find(x => (x.className || '').startsWith('cell status')).title, 'Pending input reported by the harness');
+ rowOf('old-input').listeners.click(); await tick();
+ assert.ok(detail().textContent.includes('Needs you · reported just now'));
+ assert.ok(detail().textContent.includes('Events observed'));
+ assert.ok(flatten(rowOf('old-input')).find(x => x.className === 'cell seen').textContent.includes('2h'));
+ docListeners.keydown({key:'a', target:{tagName:'BODY'}, preventDefault(){}});
  stream.listeners.snapshot({data:JSON.stringify(snapshot)}); await tick();
  // Direct API usage has no dollar receipt; never call it free or ChatGPT plan usage.
  for (const provider of ['openai', 'anthropic']) {

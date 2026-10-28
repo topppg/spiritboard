@@ -18,7 +18,8 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from . import focus
 from .harnesses import HARNESSES
-from .model import MAX_EVENT_BYTES, parse_json, timestamp
+from .input_events import InputSignals
+from .model import MAX_EVENT_BYTES, TERMINAL, parse_json, timestamp
 
 STATIC = Path(__file__).parent / "static"
 ASSETS = {
@@ -56,6 +57,7 @@ class Collector(ThreadingHTTPServer):
         summarizer=None,
         summary_providers=None,
         retention_days: float = 30,
+        input_signals: InputSignals | None = None,
     ):
         if host != "127.0.0.1":
             raise ValueError("only IPv4 loopback is supported")
@@ -67,6 +69,8 @@ class Collector(ThreadingHTTPServer):
         self.summarizer = summarizer
         self.summary_providers = summary_providers
         self.retention_days = retention_days
+        self.input_signals = input_signals
+        self._input_pruned_at = time.monotonic()
         self.stopping = threading.Event()
         self._activity: dict[int, tuple[float, dict]] = {}
         self.focus_lock = threading.Lock()
@@ -127,8 +131,15 @@ class Collector(ThreadingHTTPServer):
             }
         )
         profiles = observed["profiles"]
+        coverage = self.input_signals.coverage() if self.input_signals else {}
         data["profiles"] = [
-            {"id": p["id"], "label": p["label"], "kind": p["kind"]} for p in profiles
+            {
+                "id": p["id"],
+                "label": p["label"],
+                "kind": p["kind"],
+                "input_detection": coverage.get(p["id"], "transcript only"),
+            }
+            for p in profiles
         ]
         errors = observed["source_errors"]
         data["source_errors"] = [
@@ -166,6 +177,50 @@ class Collector(ThreadingHTTPServer):
             # a desktop session closed from a missing record, only from a positive check.
             if run["live"] is False and run.get("app"):
                 run["live"] = None
+        if at is None and self.input_signals:
+            if time.monotonic() - self._input_pruned_at >= 3600:
+                self.input_signals.prune(native_requests=self.store.input_references())
+                self._input_pruned_at = time.monotonic()
+            inputs = self.input_signals.snapshot()
+            for run in data["runs"]:
+                status = inputs.get(run["run_id"])
+                if (
+                    not status
+                    or run.get("mode") != "observation"
+                    or run["state"] in TERMINAL
+                    or run.get("archived")
+                ):
+                    continue
+                native_requests = run.get("input_request_ids", [])
+                resolved = bool(native_requests) and set(native_requests) <= status.resolved_ids
+                new_turn = status.cleared_at > 0 and status.cleared_at >= timestamp(
+                    run["last_seen"]
+                )
+                if status.state == "closed":
+                    if new_turn:
+                        run["live"] = False
+                    continue
+                if (
+                    run["state"] == "waiting_user"
+                    and status.state != "waiting_user"
+                    and (resolved or new_turn)
+                ):
+                    run.update(
+                        state=status.state,
+                        activity="Input resolved",
+                        evidence="Native lifecycle event: matching resolution or new turn",
+                    )
+                if status.state == "waiting_user" and (
+                    run.get("live") is not False or not HARNESSES[run["source"]].liveness_exact
+                ):
+                    if run.get("live") is False:
+                        run["live"] = None
+                    run.update(
+                        state="waiting_user",
+                        activity="Input awaiting your reply",
+                        evidence="Native lifecycle event: unresolved input request",
+                        input_status={"observed_at": status.occurred_at, "pending": status.pending},
+                    )
         data["activity"] = self.activity() if at is None else self.store.activity(end=at)
         data["stale_after_seconds"] = self.store.stale_after
         data["mode"] = "local-observer"

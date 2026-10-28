@@ -12,6 +12,13 @@ from spiritboard.cli import main, open_dashboard
 
 
 class LauncherCliTests(unittest.TestCase):
+    def setUp(self):
+        from spiritboard.input_events import InputSignals
+
+        inputs = patch("spiritboard.cli.InputSignals", side_effect=lambda _: InputSignals())
+        inputs.start()
+        self.addCleanup(inputs.stop)
+
     def test_bare_command_launches_without_requiring_a_subcommand(self):
         with (
             tempfile.TemporaryDirectory() as directory,

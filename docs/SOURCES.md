@@ -86,12 +86,22 @@ shows the most recent recorded activity and its timestamp.
 
 - A recorded user turn or model activity suggests `working`.
 - A recorded tool call suggests `waiting_tool`; a tool result suggests `working`.
+- Recorded Claude and Codex question tools are `waiting_user` until their matching
+  result or a new turn. Unrelated activity does not resolve another question.
 - A recorded end of a turn suggests `idle`, not completed: a session may resume.
 - opencode is `working` while its latest assistant message has no
   `time.completed` or one of its tool parts is `pending`/`running`, otherwise
-  `idle`. Permission prompts are not persisted, so it never shows waiting for you.
+  `idle`. Its plugin can report unpersisted questions and permissions separately.
 - Unsupported records do not fabricate an outcome or a waiting-for-user state.
 - Polls do not generate fake agent heartbeats or change `last_seen`.
+
+Optional native lifecycle events supplement transcripts for every harness through
+one request-ID tracker. They report input before it is persisted without reading
+terminal screens. The live snapshot overlays unresolved input; transcript
+timestamps, stored observations and historical snapshots remain unchanged.
+Missing recent evidence displays **status unknown**. Profile/session tooltips
+show input-detection coverage. See [input status](INPUT_STATUS.md) for setup,
+event contracts, privacy and source-specific limitations.
 
 Codex parent links use explicit `parent_thread_id` metadata, including
 `source.subagent.thread_spawn`. Claude subagents use `isSidechain`, `agentId`
@@ -212,7 +222,7 @@ completed discovery/coverage scan atomically through `public_state()`.
 
 These adapters follow locally observed formats, **not stable vendor APIs**.
 Unknown formats can produce missing or incomplete observations. There is no
-automatic login, transcript modification, hook installation, paid model call,
+automatic login, transcript modification, automatic hook installation, paid model call,
 or process control. Tests use invented four-profile fixtures; testing against
 existing local profiles does not start or steer the user's agents.
 
@@ -291,9 +301,10 @@ may change.
   answers, rich text and event payloads are not read into a run.
 - **State.** A newest user message or attachment is `working` for 30 minutes, then
   `idle` ("No reply recorded"); any `isStreaming` message among the five newest entries is
-  `working`. A newest agent question that is still open (a `widget` without
+  `working`. An agent question that is still open (a `widget` without
   `respondedValue` or `widgetSkipped`, a `user-form` without `formResolution`, or a
-  box request without `boxResolution`) is `waiting_user` for a day, then `idle`. Any other newest agent
+  box request without `boxResolution`) remains `waiting_user` until resolved,
+  including across unrelated messages and after a day. Any other newest agent
   message is `idle`, so a recent one reads as your turn. `event` entries
   (`name-changed`, `automation-changed`) only move `last_seen`.
 - **Liveness, open and resume.** Liveness is always unknown, so a Grok Bot agent is
@@ -378,7 +389,8 @@ falls outside the header/tail window.
 - **State.** The last message on the active branch decides: a user message or tool
   result is `working`, an assistant `toolUse` is `waiting_tool`, `pending` or
   `deferred` is `working`, and `stop`, `length`, `error` or `aborted` is `idle`
-  (never failed). Pi has no permission prompts, so it is never `waiting_user`.
+  (never failed). The optional Pi extension reports `ui_prompt_start` / `ui_prompt_end`
+  as `waiting_user` for select, confirm, input, editor and custom dialogs.
   System, extension and `!` shell messages, usage, labels and model changes do
   not change it.
 - **Text.** The title is the latest `session_info` name (an empty name clears it),
@@ -412,6 +424,7 @@ registered kind and call only these fields:
 | `observe(profile, session)` | One observation dict (`run_id` via `ns`, `session_id` `<profile>:observed`, `parent_run_id`, `name`, `task`, `activity`, `state`, `last_seen`, `started_at`, `project`, …) or `None`. Text appears only when `profile.include_text`. |
 | `latest_request(session)`, `titles(root)` | Deep request search when the bounded read missed it; optional native-ID → title index. |
 | `live_sessions(root)`, `owner(native_id)` | Native IDs a live process owns (`None` when unknown) and the native ID whose process owns a (sub)agent. |
+| `liveness_exact` | False for heuristic ownership, such as newest-session-per-directory. An explicit pending input event overrides a negative heuristic match. |
 | `session_pid(root, session_id)`, `resume(root, session_id)` | `(known, pid)` for focus and the resume command (or `None`); IDs always match `SESSION_ID` (letters, digits, `-`, `_`). |
 | `enrich(profile, rows)` | Optional: adjusts one scan's observations in place from metadata kept outside the transcripts (applied after the per-file cache, so it may change without the transcript changing). |
 | `open_app(session_id, app, chain)` | Optional: `(label, argv)` opening a live session in its own app, from the run's `app` marker and the owning process chain; `None` leaves it to the generic terminal/app adapter. |

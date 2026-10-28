@@ -65,6 +65,8 @@ class Harness:
     open_app: Callable[[str, str, list[Process]], tuple[str, tuple[str, ...]] | None] | None = None
     # Agents run off this machine, so ``open_app`` is asked with no process chain.
     remote: bool = False
+    # False when ownership is selected heuristically (for example the newest session per cwd).
+    liveness_exact: bool = True
 
 
 def shell_resume(env: str, root: Path, command: str, cwd: str) -> str:

@@ -62,7 +62,7 @@
   function harnessOf(run) {
     const profiles = state.snapshot?.profiles || [];
     const profile = profiles.find((p) => run.session_id === `${p.id}:observed`);
-    if (profile) return { key: `profile:${profile.id}`, label: profileLabel(profile) };
+    if (profile) return { key: `profile:${profile.id}`, label: profileLabel(profile), inputDetection: inputDetection(profile) };
     return { key: `${sourceOf(run)}:${accountOf(run)}`, label: `${sourceOf(run)} · ${accountOf(run)}` };
   }
   function profileLabel(profile) {
@@ -72,6 +72,11 @@
     const named = [profile.kind, tool].some((x) => profile.label.toLowerCase().startsWith(x.toLowerCase()));
     const name = named ? profile.label : `${tool} · ${profile.label}`;
     return `${name}${same ? ` · ${profile.id}` : ""}`;
+  }
+  function inputDetection(profile) {
+    if (profile.input_detection === "events observed") return "Events observed · coverage depends on the harness";
+    if (profile.input_detection === "configured") return "Configured · waiting for first event";
+    return "Transcript only · unrecorded questions or approvals may be missed";
   }
   function healthOf(run) {
     const health = typeof run.health === "object" ? run.health?.state : run.health;
@@ -108,7 +113,7 @@
       return { key: "needs", turn: true, glyph: "◐", text: "your turn" };
     }
     if (run.state === "idle" && run.live === true && !run.parent_run_id) return { key: "idle", glyph: "◌", text: "open · idle" };
-    if (!["fresh", "observed"].includes(healthOf(run))) return { key: "quiet", glyph: "○", text: "quiet" };
+    if (!["fresh", "observed"].includes(healthOf(run))) return { key: "quiet", glyph: "?", text: "status unknown" };
     // Waiting on a tool or a child is ordinary work, not something for you.
     if (String(run.state).startsWith("waiting")) return { key: "running", glyph: "●", text: "running" };
     if (run.state === "idle") return { key: "idle", glyph: "◌", text: "idle" };
@@ -184,7 +189,7 @@
   }
   function harnesses(runs, paint = true) {
     const map = new Map();
-    (state.snapshot.profiles || []).forEach((p) => map.set(`profile:${p.id}`, { key: `profile:${p.id}`, label: profileLabel(p), runs: [] }));
+    (state.snapshot.profiles || []).forEach((p) => map.set(`profile:${p.id}`, { key: `profile:${p.id}`, label: profileLabel(p), inputDetection: inputDetection(p), runs: [] }));
     runs.forEach((run) => {
       const h = harnessOf(run);
       if (!map.has(h.key)) map.set(h.key, { ...h, runs: [] });
@@ -244,7 +249,7 @@
       ["needs", "◐", needs, needs === 1 ? "needs you" : "need you"],
       ["rest", "☾", statuses.filter((s) => s.key === "rest").length, "at rest"],
       ["idle", "◌", statuses.filter((s) => s.key === "idle").length, "idle"],
-      ["quiet", "○", statuses.filter((s) => s.key === "quiet").length, "quiet"]];
+      ["quiet", "?", statuses.filter((s) => s.key === "quiet").length, "status unknown"]];
     // Zero counts say nothing; only what is there takes space.
     $("counts").replaceChildren(...counts.filter(([, , value]) => value).map(([key, glyph, value, text]) => {
       const item = node("span", null, `count c-${key}`); item.append(node("span", glyph, `g-${key}`), " ", node("strong", value), node("span", ` ${text}`, "count-word")); return item;
@@ -289,6 +294,10 @@
       select.replaceChildren(new Option("all harnesses", ""), ...list.map((h) => new Option(h.label, h.key)));
       if ([...select.options].some((o) => o.value === current)) select.value = current;
     }
+    [...select.options].forEach((option) => {
+      const detection = list.find((h) => h.key === option.value)?.inputDetection;
+      option.title = detection ? `Input detection: ${detection}` : "";
+    });
   }
   function renderHarnesses(list, drawn) {
     const focused = document.activeElement?.dataset?.focusKey;
@@ -308,7 +317,7 @@
       // With nothing running or waiting, the idle age shows once events stop, in whole minutes so it never ticks.
       const idleFor = h.latest && serverNow() - h.latest >= 60000 ? `idle ${age(h.latest)}` : "idle";
       const sub = parts.join(" · ") || (!h.runs.length ? "no observations yet" : h.rate ? "" : idleFor);
-      const name = node("span", null, "who"); name.title = sub ? `${h.label} · ${sub}` : h.label; name.append(node("span", h.label, "name"), node("span", sub, "sub"));
+      const name = node("span", null, "who"); name.title = [sub ? `${h.label} · ${sub}` : h.label, h.inputDetection && `Input detection: ${h.inputDetection}`].filter(Boolean).join(" · "); name.append(node("span", h.label, "name"), node("span", sub, "sub"));
       const rate = node("span", h.rate || "", "rate");
       if (h.rate) rate.title = `${h.rate} events in the last minute`;
       button.append(swatch, name, rate);
@@ -571,12 +580,14 @@
     const statusCell = node("span", null, `cell status g-${status.key}`);
     statusCell.append(node("span", status.glyph, "glyph"), ` ${status.text}`);
     if (status.child) statusCell.title = "A subagent is running";
+    else if (status.key === "needs" && run.input_status?.pending > 0) statusCell.title = "Pending input reported by the harness";
+    else if (status.key === "quiet") statusCell.title = "No recent activity signal; a question or approval may be pending";
     else if (run.inferred) statusCell.title = "Inferred from the transcript";
     const agent = node("span", null, "cell agent");
     const harness = harnessOf(run);
     // The harness lives in tooltips, the accessible name and the opened panel; rows carry status colour only.
     const where = run.app ? `${harness.label} · ${run.app}` : harness.label;
-    agent.title = where;
+    agent.title = [where, harness.inputDetection && `Input detection: ${harness.inputDetection}`].filter(Boolean).join(" · ");
     // Renaming happens in the opened session; a click on the row only opens it.
     const name = node("span", nameOf(run), "agent-name");
     name.title = titleNote(run) ? `${where} · ${titleNote(run)}` : where;
@@ -797,7 +808,7 @@
     else if (status.turn) line("g-needs", "◐", `Your turn · finished ${ago(run.last_seen)}`);
     else if (run.archived) line("g-closed", "■", `Archived in ${run.app || "its app"} · last active ${ago(run.last_seen)}`);
     else if (status.key === "closed") line("g-closed", "■", `Closed ${ago(run.last_seen)}`, "no running process owns this session");
-    else if (status.key === "needs") line("g-needs", "◐", `Needs you · asked ${ago(run.last_seen)}`, parent ? `answer in “${nameOf(parent)}”` : "");
+    else if (status.key === "needs") line("g-needs", "◐", `Needs you · ${run.input_status ? "reported" : "asked"} ${ago(run.input_status?.observed_at || run.last_seen)}`, parent ? `answer in “${nameOf(parent)}”` : "");
     else if (status.key !== "running") line(`g-${status.key}`, status.glyph, status.text[0].toUpperCase() + status.text.slice(1));
     // A subagent's goal is the task its parent gave it, unless a summary exists.
     const goal = run.ai_summary?.text || (run.parent_run_id ? run.task : "");
@@ -814,6 +825,7 @@
       item.append(node("dt", title, "label"), dd);
       fields.append(item);
     };
+    field("input detection", harness.inputDetection);
     field("latest", terminal.has(run.state) ? run.summary || label(run.state) : run.activity || "no activity reported");
     if (!run.parent_run_id) field("you asked", run.task || (run.inferred ? "text hidden · set include_text for this profile" : ""), run.task ? "quote" : "");
     if (run.parent_run_id) {

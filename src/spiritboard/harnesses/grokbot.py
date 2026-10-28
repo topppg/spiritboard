@@ -47,8 +47,6 @@ AGENT_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 MAX_ENTRIES = 2_000
 # A request newer than this without a reply means the cloud agent is still on it.
 WORKING_MS = 30 * 60_000
-# An agent question left unanswered longer than this was abandoned, not pending.
-QUESTION_MS = 24 * 3_600_000
 USER_KINDS = {"message", "user-attachment"}
 _VERSIONS: dict[str, tuple[tuple[int, int], bool]] = {}
 
@@ -309,19 +307,20 @@ def observe(profile: SourceProfile, session: Session) -> dict | None:
     if profile.include_text:
         out["task"] = request or TEXT_HIDDEN
     last = turn[-1]
+    pending = next((entry for entry in reversed(turn) if _question(entry)), None)
     streaming = any(e.get("isStreaming") is True for e in turn[-5:])
     age = time.time() * 1000 - _ms(last.get("timestampMs"))
-    if streaming:
+    if pending is not None:
+        prompt = _message(pending).get("widget")
+        asked = reply_text(prompt.get("prompt")) if isinstance(prompt, dict) else ""
+        state, evidence = "waiting_user", "agent message awaiting an answer"
+        activity = (asked if profile.include_text else "") or _question(pending)
+    elif streaming:
         state, activity, evidence = "working", "Message streaming", "message streaming"
     elif _user(last) and age < WORKING_MS:
         state, activity, evidence = "working", "Request sent · agent working", "user turn"
     elif _user(last):
         state, activity, evidence = "idle", "No reply recorded", "user turn without a reply"
-    elif age < QUESTION_MS and (question := _question(last)):
-        prompt = _message(last).get("widget")
-        asked = reply_text(prompt.get("prompt")) if isinstance(prompt, dict) else ""
-        state, evidence = "waiting_user", "agent message awaiting an answer"
-        activity = (asked if profile.include_text else "") or question
     else:
         state, activity, evidence = "idle", reply or "Reply recorded", "agent message"
     out.update(

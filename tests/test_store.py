@@ -59,6 +59,21 @@ class StoreTests(unittest.TestCase):
     def tearDown(self):
         self.store.close()
 
+    def test_input_references_include_observations_outside_the_snapshot_limit(self):
+        self.store.observe(
+            observation(
+                run="old",
+                state="waiting_user",
+                last_seen="2026-01-01T00:00:00Z",
+                input_request_ids=["tool:old"],
+            )
+        )
+        current = self.store.run("old")
+        for index in range(5000):
+            self.store._put({**current, "run_id": f"new-{index}", "last_seen": now()})
+        self.assertNotIn("old", {run["run_id"] for run in self.store.snapshot(limit=5000)["runs"]})
+        self.assertEqual(self.store.input_references()["old"], ["tool:old"])
+
     def test_exact_duplicate_is_idempotent_and_conflict_rolls_back(self):
         value = event()
         first = self.store.ingest(value)

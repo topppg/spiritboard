@@ -343,6 +343,13 @@ def parse(profile: SourceProfile, rows: list[dict], mtime: float) -> dict | None
             # The header's request and reply predate the unread middle; the scan searches back.
             # A subagent keeps its first prompt, which is the task its parent gave it.
             last_reply = ""
+            if pending:
+                out.update(
+                    state="unknown",
+                    activity="Transcript middle not read",
+                    evidence="DeepSeek Harness log: unread middle; inferred session state",
+                )
+            pending.clear()
             if not agent:
                 out["task"] = TEXT_HIDDEN
             continue

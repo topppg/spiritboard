@@ -119,12 +119,12 @@ New harnesses plug in as one module each (see [the source guide](https://github.
 
   | Status | Meaning |
   | --- | --- |
-  | ◐ **needs you** | Waiting for your approval. |
+  | ◐ **needs you** | An unanswered question or approval was reported. It stays actionable until resolved. |
   | ◐ **your turn** | Finished its turn and is waiting for your next direction: for 12 hours while the session is still open, otherwise for 30 minutes. Settled subagents stay folded by default; opening the session or expanding its subagent list shows them. |
   | ☾ **at rest** | A turn you checked with **let it rest** (or `r`) in its detail view; nothing needed now. It goes back to your turn as soon as the agent does anything. Kept in this browser only. |
   | ● **running** | Working, including while it waits on a tool or a subagent. A running descendant also keeps its main agent running, even if the main agent's own transcript is idle or quiet. Explicit approvals, finished runs and closed sessions keep their own status. |
   | ◌ **open · idle** | Still open in a terminal or app, idle for longer. It stays in the active view however long it idles, dimmed, grouped under one folded **▸ N open · idle** line at the bottom of the list (unless one of its subagents is running or needs you), with its subagents folded. Opening a session lists all its subagents and closing it folds them again, keeping only ones that are running or need you; **▸ N subagents** (or `s`) folds or unfolds them without opening the session, and closes both when its panel is open. Its summary and title are not refreshed while it idles. |
-  | ○ **quiet** | No recent activity, and liveness could not be checked. Quiet never means failed. |
+  | ? **status unknown** | No recent activity evidence. The agent may be working or waiting for an unrecorded reply. |
   | ■ **closed** | No running process owns the session any more. |
   | ✓ **done** | An SDK run reported that it finished. |
 
@@ -188,6 +188,13 @@ and rerun `uv run python scripts/benchmark_startup.py --samples 7` from a checko
 
 ## Sources and privacy
 
+- **Input status across interfaces.** Native lifecycle events can report questions
+  before they reach transcripts. Run `spiritboard inputs install` to add local
+  Claude/Codex hooks and OpenCode/Pi extensions, independently of the terminal.
+  Codex requires reviewing the installed hooks with `/hooks`; existing prompts
+  are not replayed. DeepSeek and Grok Bot also use their recorded input states.
+  Setup is explicit and reversible; [coverage, setup and limitations](https://github.com/topppg/spiritboard/blob/main/docs/INPUT_STATUS.md)
+  explain what each source can report.
 - **Discovery.** The standard `~/.claude`, `~/.codex`, `~/.pi/agent` and `~/.dsh`
   folders, named variants such as `~/.claude-work` or `~/.codex-switch/profiles/*`,
   `CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `PI_CODING_AGENT_DIR` /
