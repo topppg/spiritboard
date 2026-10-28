@@ -298,7 +298,8 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  stream.listeners.snapshot({data:JSON.stringify(snapshot)});
  assert.ok(ids.flux.attrs['aria-label'].includes('Codex · work'));
  // Spend stays in the tooltip; the header only says summaries are on.
- assert.equal(ids['ai-status'].textContent, 'Summaries');
+ assert.equal(ids['ai-status'].textContent, 'AI settings');
+ assert.equal(ids['summary-settings-open'].dataset.state, 'on');
  assert.ok(ids['summary-settings-open'].title.includes('$0.0021 spent · 2 API calls'));
  assert.ok(ids.counts.textContent.includes('1 needs you'));
  // Status and agent columns resize by drag or arrow keys, clamped and remembered; double-click resets.
@@ -900,17 +901,22 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  // Direct API usage has no dollar receipt; never call it free or ChatGPT plan usage.
  for (const provider of ['openai', 'anthropic']) {
    stream.listeners.snapshot({data:JSON.stringify({...snapshot,ai:{enabled:true,status:'ready',provider,api_calls:1,subscription_calls:0,known_cost_usd:0,actual_cost_usd:null,unknown_cost_calls:1}})});
-   assert.ok(ids['ai-status'].textContent.includes(provider === 'openai' ? 'OpenAI API' : 'Anthropic'));
+   assert.equal(ids['ai-status'].textContent, 'AI settings');
+   assert.ok(ids['summary-settings-open'].title.includes(provider === 'openai' ? 'OpenAI API' : 'Anthropic'));
    assert.ok(ids['summary-settings-open'].title.includes('cost unavailable'));
    assert.ok(!ids['summary-settings-open'].title.includes('$0.0000 spent'));
    assert.ok(!ids['summary-settings-open'].title.includes('plan calls'));
  }
  stream.listeners.snapshot({data:JSON.stringify({...snapshot,ai:{enabled:true,status:'error',error:'Invented quota error',provider:'openrouter',api_calls:3,known_cost_usd:.01,actual_cost_usd:.01,unknown_cost_calls:0}})});
- assert.equal(ids['ai-status'].textContent, 'Summaries need attention');
+ assert.equal(ids['ai-status'].textContent, 'AI settings');
+ assert.equal(ids['summary-settings-open'].dataset.state, 'error');
+ assert.equal(ids['summary-settings-open'].attrs['aria-label'], 'AI settings: connection needs attention');
  assert.ok(ids['summary-settings-open'].title.startsWith('Invented quota error · $0.0100 spent · 3 API calls'));
  // Summaries off and empty chart.
  stream.listeners.snapshot({data:JSON.stringify({...snapshot,ai:{enabled:false},activity:{bucket_seconds:10,buckets:60,end:now,runs:{}}})});
- assert.equal(ids['ai-status'].textContent, 'Summaries off');
+ assert.equal(ids['ai-status'].textContent, 'AI settings');
+ assert.equal(ids['summary-settings-open'].dataset.state, 'off');
+ assert.ok(ids['summary-settings-open'].title.includes('add an API key'));
  assert.ok(ids.flux.textContent.includes('No events in the last 10 minutes'));
 })().catch(error => { console.error(error);process.exitCode=1; });
 """

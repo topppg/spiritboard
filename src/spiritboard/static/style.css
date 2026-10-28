@@ -48,7 +48,10 @@ p { margin: 0; }
 /* Live and connecting stay quiet; a dropped connection says so and brings back Refresh. */
 #connection.down { color: var(--err); }
 #connection.past, .counts-at { color: var(--wait); }
-#summary-settings-open { border-color: transparent; color: var(--soft); font-size: var(--fs-sm); white-space: nowrap; }
+#summary-settings-open { flex: none; display: inline-flex; align-items: center; gap: 8px; color: var(--brand); font-size: var(--fs-sm); white-space: nowrap; }
+#summary-settings-open::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+#summary-settings-open[data-state="on"]::before { background: var(--run); }
+#summary-settings-open[data-state="error"]::before { background: var(--err); }
 #summary-settings-open:hover { border-color: var(--border); color: var(--text); }
 #refresh { display: none; }
 .top:has(#connection.down) #refresh { display: inline-block; }

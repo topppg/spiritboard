@@ -7,13 +7,20 @@ dashboard keeps the original status evidence next to them.
 
 ## Connect from the dashboard
 
-Open **Summaries** in the header, read the sharing notice, and check the consent box before
+Open **AI settings** in the header, read the sharing notice, and check the consent box before
 connecting a provider. Choose a service from **Provider**, then sign in or add
 its API key. Connecting enables summaries and makes that service the first choice.
 
-The main panel keeps only connection and consent controls visible. Expand
-**How it works** for model details. OpenRouter also offers **Use an API key
-instead** below its sign-in button.
+The button stays visible on smaller screens. On the first visit, the panel opens
+automatically if summaries are off and no provider is connected or awaiting sign-in.
+Choose **Maybe later** to dismiss it; reopen it from **AI settings** whenever you want.
+Only a nonsecret seen flag is saved in browser storage, for that dashboard address.
+If browser storage is unavailable, the introduction can reappear on a later visit.
+Demo mode never opens setup automatically. Opening or dismissing the panel does
+not connect a service, grant consent or enable summaries.
+
+OpenRouter's API key field is directly below its sign-in button. Expand
+**How it works** for model details.
 
 Available connections:
 
@@ -156,7 +163,7 @@ Spiritboard never executes provider output or changes the original task or statu
 
 There is no spend or call cap. Each OpenRouter request's actual charge is read from
 OpenRouter's `usage.cost` field and recorded; a timeout or missing cost is counted
-as unknown rather than zero. The tooltip of the header's **Summaries** button shows
+as unknown rather than zero. The tooltip of the header's **AI settings** button shows
 total known spend and the number of API calls. Direct OpenAI and Anthropic responses report token usage, not a
 final billed dollar charge; those calls count as unknown cost, never as free or
 as an estimated "actual" charge. When no charge is known, the tooltip says

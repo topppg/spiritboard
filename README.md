@@ -253,7 +253,11 @@ says so.
 
 ## Optional goal summaries
 
-Open **Summaries** in the dashboard header. Read the excerpt-sharing notice, choose
+Open **AI settings** in the dashboard header, including on smaller screens. The panel
+opens automatically on your first visit if no provider is connected; choose **Maybe
+later** to skip setup. This choice is remembered in this browser for the dashboard
+address when browser storage is available. Demo mode and existing connections do
+not trigger setup. Read the excerpt-sharing notice, choose
 a provider, then sign in or add a key. OpenRouter supports sign-in or an API key;
 Anthropic and OpenAI support API keys. **Continue with ChatGPT** uses an eligible
 Plus or Pro account; Enterprise workspaces are not supported by that sign-in route.
@@ -270,7 +274,7 @@ Anthropic API. If needed, another explicitly connected provider can be tried.
 Pause summaries or disconnect at any time.
 
 API-key connections use separate API billing; ChatGPT sign-in uses your plan
-allowance and its limits. The **Summaries** tooltip separates known API charges, API calls
+allowance and its limits. The **AI settings** tooltip separates known API charges, API calls
 with unknown cost, and ChatGPT plan calls rather than treating usage as free.
 Excerpts are redacted on a best-effort basis,
 not guaranteed safe for confidential work. Read the [summary guide](https://github.com/topppg/spiritboard/blob/main/docs/SUMMARIES.md).

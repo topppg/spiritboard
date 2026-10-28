@@ -32,6 +32,9 @@ document={body, activeElement:null,
   getElementById:id=>id==='summary-settings-open' ? button : null,
   createElement:tag=>new Element(tag)};
 const posts=[],requests=[],popups=[],timers=new Map(); let nextTimer=1, fail=false, blocked=false, authURL='https://openrouter.ai/auth?code_challenge=synthetic';
+const seenKey='spiritboard.ai-setup-seen', stored={[seenKey]:'1'}, storageWrites=[];
+let storageUnavailable=false, failSettings=false, holdSettings=false;
+const settingsResolvers=[];
 let state={enabled:false,active_provider:null,preferred_provider:'openrouter',
   policy:'preferred-first',demo:false,providers:{
   openrouter:{available:true,connected:false,pending:false,error:null,
@@ -43,13 +46,22 @@ let state={enabled:false,active_provider:null,preferred_provider:'openrouter',
 const context={document,URL,
   setTimeout:fn=>{ const id=nextTimer++; timers.set(id,fn); return id; },
   clearTimeout:id=>timers.delete(id),
-  window:{open:(url,target)=>{
+  window:{get localStorage(){
+    if(storageUnavailable) throw new Error('storage unavailable');
+    return {getItem:name=>stored[name]??null,setItem:(name,value)=>{
+      storageWrites.push([name,value]); stored[name]=value;
+    }};
+  },open:(url,target)=>{
     if(blocked) return null;
     const popup={opener:{},location:{href:url},closed:false,close(){this.closed=true;}};
     popups.push(popup); return popup;
   }},
   fetch:async(url,options)=>{
   requests.push(url);
+  if(options.method==='GET') {
+    if(holdSettings) await new Promise(resolve=>settingsResolvers.push(resolve));
+    if(failSettings) return {ok:false,json:async()=>({error:'private failure detail'})};
+  }
   if(options.method==='POST') {
     const data=JSON.parse(options.body); posts.push({url,options,data});
     if(fail) return {ok:false,json:async()=>({error:'sensitive detail'})};
@@ -71,6 +83,7 @@ const context={document,URL,
   }
   return {ok:true,json:async()=>structuredClone(state)};
 }};
+// PRE_EXECUTION_SETUP
 vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),context);
 const flatten=node=>node.children.filter(c=>typeof c!=='string').flatMap(c=>[c,...flatten(c)]);
 const all=()=>flatten(body), find=fn=>all().find(fn), dialog=()=>find(n=>n.tagName==='dialog');
@@ -93,12 +106,13 @@ const submit=async(name='openrouter')=>{
 
 @unittest.skipUnless(shutil.which("node"), "Node is optional; summary settings DOM checks skipped")
 class SummarySettingsTests(unittest.TestCase):
-    def run_browser(self, assertions: str) -> None:
+    def run_browser(self, assertions: str, *, setup: str = "") -> None:
+        fixture = FIXTURE.replace("// PRE_EXECUTION_SETUP", setup)
         result = subprocess.run(
             [
                 "node",
                 "-e",
-                FIXTURE + "\n(async()=>{\n" + assertions + "\n})();",
+                fixture + "\n(async()=>{\n" + assertions + "\n})();",
                 str(STATIC / "summary-settings.js"),
             ],
             capture_output=True,
@@ -106,6 +120,111 @@ class SummarySettingsTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_first_visit_opens_optional_setup_without_connecting(self) -> None:
+        self.run_browser(
+            r"""
+await tick();
+assert.deepEqual(requests,['/api/summaries/settings']);
+assert.ok(dialog().open);
+assert.equal(find(n=>n.tagName==='h2').textContent,'AI settings');
+assert.ok(find(n=>n.id==='summary-settings-intro').textContent.includes('API key'));
+const dismiss=find(n=>n.attrs['aria-label']==='Maybe later, close AI settings');
+assert.equal(dismiss.textContent,'Maybe later');
+assert.equal(consent().checked,false);
+assert.equal(consent().disabled,false);
+assert.equal(connect('openrouter').disabled,true);
+assert.equal(key().disabled,true);
+assert.equal(toggle().checked,false);
+assert.equal(posts.length,0); assert.equal(popups.length,0);
+assert.equal(stored[seenKey],'1');
+assert.deepEqual(storageWrites,[[seenKey,'1']]);
+dialog().close(); assert.equal(timers.size,0);
+await open();
+assert.equal(find(n=>n.attrs['aria-label']==='Close AI settings').textContent,'Close');
+""",
+            setup="delete stored[seenKey];",
+        )
+
+    def test_returning_visit_waits_for_manual_open(self) -> None:
+        self.run_browser(r"""
+await tick();
+assert.equal(dialog().open,false);
+assert.equal(requests.length,0);
+await open();
+assert.ok(dialog().open);
+assert.equal(find(n=>n.attrs['aria-label']==='Close AI settings').textContent,'Close');
+assert.ok(storageWrites.every(([name,value])=>name===seenKey&&value==='1'));
+""")
+
+    def test_configured_pending_enabled_and_demo_visits_are_not_interrupted(self) -> None:
+        for configuration in (
+            "state.providers.openrouter.connected=true;",
+            "state.providers.codex.pending=true;",
+            "state.enabled=true;",
+            "state.demo=true;",
+        ):
+            with self.subTest(configuration=configuration):
+                self.run_browser(
+                    r"""
+await tick();
+assert.deepEqual(requests,['/api/summaries/settings']);
+assert.equal(dialog().open,false);
+assert.equal(posts.length,0); assert.equal(popups.length,0);
+assert.equal(storageWrites.length,0);
+assert.equal(stored[seenKey],undefined);
+""",
+                    setup="delete stored[seenKey];" + configuration,
+                )
+
+    def test_failed_startup_keeps_setup_unseen_and_manual_retry_works(self) -> None:
+        self.run_browser(
+            r"""
+await tick();
+assert.equal(dialog().open,false);
+assert.equal(storageWrites.length,0);
+assert.equal(stored[seenKey],undefined);
+assert.ok(!body.textContent.includes('private failure detail'));
+assert.equal(posts.length,0); assert.equal(popups.length,0);
+failSettings=false; await open();
+assert.ok(dialog().open);
+assert.equal(stored[seenKey],'1');
+""",
+            setup="delete stored[seenKey]; failSettings=true;",
+        )
+
+    def test_unavailable_browser_storage_does_not_block_setup_or_repeat_it(self) -> None:
+        self.run_browser(
+            r"""
+await tick(); assert.ok(dialog().open);
+assert.equal(requests.length,1);
+dialog().close(); await tick();
+assert.equal(dialog().open,false);
+assert.equal(timers.size,0);
+await open();
+assert.ok(dialog().open);
+assert.equal(find(n=>n.attrs['aria-label']==='Close AI settings').textContent,'Close');
+assert.equal(posts.length,0); assert.equal(popups.length,0);
+assert.equal(storageWrites.length,0);
+""",
+            setup="storageUnavailable=true;",
+        )
+
+    def test_slow_startup_cannot_reopen_a_manually_closed_panel(self) -> None:
+        self.run_browser(
+            r"""
+assert.equal(settingsResolvers.length,1);
+holdSettings=false;
+await open(); assert.ok(dialog().open);
+dialog().close();
+settingsResolvers.shift()(); await tick();
+assert.equal(dialog().open,false);
+assert.equal(timers.size,0);
+assert.equal(posts.length,0); assert.equal(popups.length,0);
+assert.equal(stored[seenKey],'1');
+""",
+            setup="delete stored[seenKey]; holdSettings=true;",
+        )
 
     def test_opt_in_connection_and_exact_provider_models(self) -> None:
         self.run_browser(r"""
@@ -168,9 +287,8 @@ assert.equal(connect('openrouter').disabled,false);
         self.run_browser(r"""
 await open();
 const details=all().filter(n=>n.tagName==='details');
-assert.equal(details.length,2);
+assert.equal(details.length,1);
 assert.ok(details.every(n=>!n.open));
-assert.ok(details.some(n=>n.textContent.includes('Use an API key instead')));
 assert.ok(details.some(n=>n.textContent.includes('How it works')));
 const visible=n=>{
   if(typeof n==='string') return n;
@@ -185,7 +303,7 @@ assert.ok(text.includes('OpenRouter credits'));
 assert.ok(!text.includes('Plus or Pro'));
 assert.ok(!text.includes('DeepSeek V4 Flash'));
 assert.ok(!text.includes('GPT-6 Luna'));
-assert.ok(!text.includes('Or paste an OpenRouter API key'));
+assert.ok(text.includes('OpenRouter API key'));
 assert.ok(text.split(/\s+/).length<130);
 details.forEach(n=>n.open=true);
 key().value='synthetic-unsaved'; dialog().close();
@@ -203,6 +321,8 @@ key().value='synthetic-private-key'; await submit();
 assert.equal(key().value,'');
 assert.equal(posts[0].data.key,'synthetic-private-key');
 assert.ok(!body.textContent.includes('synthetic-private-key'));
+assert.ok(storageWrites.every(([name,value])=>name===seenKey&&value==='1'));
+assert.ok(!JSON.stringify(stored).includes('synthetic-private-key'));
 assert.equal(toggle().disabled,false);
 toggle().checked=true; await change(toggle());
 assert.equal(posts.at(-1).url,'/api/summaries/enabled');
@@ -375,7 +495,6 @@ class SummarySettingsAssetsTests(unittest.TestCase):
     def test_script_has_no_browser_secret_storage_or_html_injection(self) -> None:
         script = (STATIC / "summary-settings.js").read_text()
         for forbidden in (
-            "localStorage",
             "sessionStorage",
             "document.cookie",
             "innerHTML",
