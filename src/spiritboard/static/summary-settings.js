@@ -15,13 +15,13 @@
   dialog.setAttribute('aria-labelledby', 'summary-settings-title');
   dialog.setAttribute('aria-describedby', 'summary-settings-intro');
   const header = element('div', '', 'summary-settings-head');
-  const heading = element('h2', 'AI summaries');
+  const heading = element('h2', 'AI settings');
   heading.id = 'summary-settings-title';
   const close = element('button', 'Close');
   close.type = 'button';
-  close.setAttribute('aria-label', 'Close summary settings');
+  close.setAttribute('aria-label', 'Close AI settings');
   header.append(heading, close);
-  const intro = element('p', 'See what your agents are working on, at a glance.', 'summary-settings-intro');
+  const intro = element('p', 'Connect a provider or add an API key for AI titles and goal summaries. Setup is optional.', 'summary-settings-intro');
   intro.id = 'summary-settings-intro';
   const notice = element('p', '', 'summary-settings-notice');
   notice.setAttribute('role', 'status');
@@ -132,15 +132,8 @@
     const keyHelp = element('p', 'Saved in your system credential store.', 'summary-settings-help');
     keyHelp.id = `summary-${name}-key-help`;
     keyForm.append(keyLabel, key, saveKey, keyHelp);
-    let keyOptions = null;
-    if (name === 'openrouter') {
-      keyOptions = element('details', '', 'summary-settings-details');
-      keyOptions.append(element('summary', 'Use an API key instead'), keyForm);
-      providers[name].section.append(keyOptions);
-    } else {
-      providers[name].section.append(keyForm);
-    }
-    Object.assign(providers[name], { keyForm, key, saveKey, keyOptions });
+    providers[name].section.append(keyForm);
+    Object.assign(providers[name], { keyForm, key, saveKey });
   }
   dialog.append(header, intro, notice, message, consentLabel, toggleLabel, pickerLabel, ...names.map(name => providers[name].section), details);
   document.body.append(dialog);
@@ -151,6 +144,17 @@
   let generation = 0;
   let pendingPopup = null;
   let selected = null;
+  const setupSeenKey = 'spiritboard.ai-setup-seen';
+
+  function hasSeenSetup() {
+    try { return window.localStorage.getItem(setupSeenKey) === '1'; }
+    catch { return false; }
+  }
+
+  function rememberSetup() {
+    try { window.localStorage.setItem(setupSeenKey, '1'); }
+    catch { /* Setup remains usable when browser storage is unavailable. */ }
+  }
 
   function clearKeys() {
     for (const nodes of Object.values(providers)) {
@@ -236,7 +240,7 @@
       settings = result;
       render();
     } catch {
-      if (dialog.open && current === generation) showError('Could not load summary settings. Close this panel and try again.');
+      if (dialog.open && current === generation) showError('Could not load AI settings. Close this panel and try again.');
     }
   }
 
@@ -317,7 +321,6 @@
   picker.addEventListener('change', () => {
     clearKeys();
     if (!picker.disabled && names.includes(picker.value)) selected = picker.value;
-    for (const nodes of Object.values(providers)) if (nodes.keyOptions) nodes.keyOptions.open = false;
     showError('');
     render();
   });
@@ -330,23 +333,41 @@
     generation += 1;
     clearTimeout(timer);
     clearKeys();
-    for (const nodes of Object.values(providers)) if (nodes.keyOptions) nodes.keyOptions.open = false;
     selected = null;
     details.open = false;
     consent.checked = false;
     if (pendingPopup) pendingPopup.close();
     pendingPopup = null;
-    // On narrow screens the opener sits in the folded header menu; return focus to the menu button.
-    const more = document.getElementById('more');
-    (opener.offsetParent === null && more ? more : opener).focus();
+    opener.focus();
   });
-  opener.addEventListener('click', () => {
+  function openSettings(initial = null, firstVisit = false) {
     if (dialog.open) return;
     generation += 1;
     showError('');
-    notice.textContent = 'Loading summary settings…';
+    close.textContent = firstVisit ? 'Maybe later' : 'Close';
+    close.setAttribute('aria-label', firstVisit ? 'Maybe later, close AI settings' : 'Close AI settings');
+    notice.textContent = 'Loading AI settings…';
     dialog.showModal();
-    void refresh();
+    rememberSetup();
+    if (initial) {
+      settings = initial;
+      render();
+    } else {
+      void refresh();
+    }
     schedule();
-  });
+  }
+  opener.addEventListener('click', () => openSettings());
+
+  async function introduceSetup() {
+    if (hasSeenSetup()) return;
+    const current = generation;
+    try {
+      const result = await request('/api/summaries/settings');
+      if (current !== generation || dialog.open || result.demo === true || result.enabled === true) return;
+      if (Object.values(result.providers || {}).some(value => value.connected === true || value.pending === true)) return;
+      openSettings(result, true);
+    } catch { /* Leave setup unseen so a later visit can retry. */ }
+  }
+  void introduceSetup();
 })();

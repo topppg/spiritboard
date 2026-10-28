@@ -254,9 +254,12 @@
   function renderAi() {
     const ai = state.snapshot.ai || {};
     const host = $("ai-status"); host.replaceChildren();
-    // Usage stays one hover away on the button; the header only says whether summaries work.
+    // Keep the settings label stable; connection state and usage stay in the tooltip.
     const button = $("summary-settings-open");
-    if (!ai.enabled) { host.append(node("span", "Summaries off", "muted")); button.title = "Open AI summaries to connect a provider or resume summaries"; return; }
+    host.append(node("span", "AI settings"));
+    button.dataset.state = !ai.enabled ? "off" : ai.status === "error" ? "error" : "on";
+    button.setAttribute("aria-label", `AI settings: ${!ai.enabled ? "summaries off" : ai.status === "error" ? "connection needs attention" : "summaries on"}`);
+    if (!ai.enabled) { button.title = "Summaries off · Connect an AI provider, add an API key or resume summaries"; return; }
     const known = ai.known_cost_usd ?? ai.actual_cost_usd ?? 0;
     const spent = ai.unknown_cost_calls && known === 0 ? "cost unavailable" : `$${known.toFixed(4)}${ai.unknown_cost_calls ? "+ known spend" : " spent"}`;
     const usage = [];
@@ -264,8 +267,7 @@
     if (ai.subscription_calls) usage.push(`${ai.subscription_calls} ChatGPT plan calls`);
     if (!usage.length) usage.push("no provider calls yet");
     const provider = ({ codex: "ChatGPT", openrouter: "OpenRouter", anthropic: "Anthropic", openai: "OpenAI API" })[ai.provider] || "";
-    host.append(node("span", ai.status === "error" ? "Summaries need attention" : `Summaries${provider ? ` · ${provider}` : ""}`, ai.status === "error" ? "bad" : ""));
-    button.title = [ai.error, ...usage, "opt-in: bounded redacted context goes only to connected providers"].filter(Boolean).join(" · ");
+    button.title = [ai.error || `Summaries on${provider ? ` · ${provider}` : ""}`, ...usage, "opt-in: bounded redacted context goes only to connected providers"].filter(Boolean).join(" · ");
   }
   function renderWarnings() {
     const raw = state.snapshot.source_errors || [];
