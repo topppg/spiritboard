@@ -93,6 +93,19 @@ shows the most recent recorded activity and its timestamp.
 - Unsupported records do not fabricate an outcome or a waiting-for-user state.
 - Polls do not generate fake agent heartbeats or change `last_seen`.
 
+Claude can display a question with choices before writing that tool call to its
+transcript. For live top-level Claude sessions in **cmux**, Spiritboard checks
+the current terminal viewport every few seconds through cmux's local
+`read-screen` command (40 lines, no scrollback). It verifies the session's
+process start time, foreground process group, socket, workspace and surface,
+then recognizes the question menu's exact footer and input options. While that
+menu is visible the live board shows **needs you**, even when the transcript
+is stale. Screen text is discarded immediately: it is never stored, logged,
+sent to a summary provider or used to change transcript timestamps or history.
+The status clears on the next check after the prompt disappears. Missing or
+unreadable terminal metadata falls back to transcript evidence. Other terminals
+and unrecognized prompt layouts still rely on what the transcript records.
+
 Codex parent links use explicit `parent_thread_id` metadata, including
 `source.subagent.thread_spawn`. Claude subagents use `isSidechain`, `agentId`
 and `sessionId`. A Claude `parentUuid` is a message link, **not** an agent link.

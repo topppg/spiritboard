@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from . import focus
 from .harnesses import HARNESSES
-from .model import MAX_EVENT_BYTES, parse_json, timestamp
+from .model import MAX_EVENT_BYTES, TERMINAL, parse_json, timestamp
 
 STATIC = Path(__file__).parent / "static"
 ASSETS = {
@@ -166,6 +166,19 @@ class Collector(ThreadingHTTPServer):
             # a desktop session closed from a missing record, only from a positive check.
             if run["live"] is False and run.get("app"):
                 run["live"] = None
+            if (
+                kinds[profile_id] == "claude"
+                and run["live"] is True
+                and not run.get("parent_run_id")
+                and not run.get("archived")
+                and run["state"] not in TERMINAL
+                and observed.get("waiting_user", {}).get(run["run_id"]) == run["last_seen"]
+            ):
+                run.update(
+                    state="waiting_user",
+                    activity="Question awaiting your answer",
+                    evidence="Claude foreground terminal: choice prompt; inferred session state",
+                )
         data["activity"] = self.activity() if at is None else self.store.activity(end=at)
         data["stale_after_seconds"] = self.store.stale_after
         data["mode"] = "local-observer"

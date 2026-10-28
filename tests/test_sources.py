@@ -113,6 +113,35 @@ class SourcesTests(unittest.TestCase):
         self.assertNotIn("/private", rendered)
         self.assertTrue(all(row["project"] == "project" for row in observations))
 
+    def test_monitor_samples_pending_input_without_changing_transcripts(self):
+        from spiritboard.store import Store
+
+        profile = self.profile("claude")
+        self.log(profile, "session.jsonl", self.claude())
+        store = Store()
+        self.addCleanup(store.close)
+        monitor = Monitor([profile], store)
+        with (
+            patch("spiritboard.monitor._live_or_unknown", return_value=frozenset({"same"})),
+            patch("spiritboard.monitor.waiting_for_input", return_value=True) as pending,
+        ):
+            monitor.scan_once()
+            row = store.snapshot()["runs"][0]
+            self.assertEqual(row["state"], "waiting_tool")
+            self.assertEqual(
+                monitor.public_state()["waiting_user"], {row["run_id"]: row["last_seen"]}
+            )
+            pending.assert_called_once_with(profile, "same")
+            pending.return_value = False
+            monitor._live_at = 0
+            monitor.scan_once()
+            self.assertEqual(monitor.public_state()["waiting_user"], {})
+            self.assertEqual(store.snapshot()["runs"][0]["last_seen"], row["last_seen"])
+            pending.side_effect = OSError("PRIVATE terminal details")
+            monitor._live_at = 0
+            self.assertEqual(monitor.scan_once()["errors"], {})
+            self.assertEqual(monitor.public_state()["waiting_user"], {})
+
     def test_codex_actual_parent_metadata_and_three_levels(self):
         profile = self.profile()
         for native, parent in [("root", None), ("child", "root"), ("grandchild", "child")]:

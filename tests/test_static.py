@@ -814,6 +814,12 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  const worker = run('worker', 'delegator', 'Worker');
  const delegation = (agents) => stream.listeners.snapshot({data:JSON.stringify({...snapshot, runs:agents})});
  const statusText = (id) => flatten(rowOf(id)).find(x => (x.className || '').startsWith('cell status')).textContent;
+ // An unanswered choice remains actionable even after its transcript stops changing.
+ delegation([{...delegator, state:'waiting_user', last_seen:old, health:'stale'}]);
+ assert.equal(statusText('delegator'), '◐ needs you');
+ docListeners.keydown({key:'w', target:{tagName:'BODY'}, preventDefault(){}});
+ assert.deepEqual(rows().map(r => r.dataset.runId), ['delegator']);
+ docListeners.keydown({key:'a', target:{tagName:'BODY'}, preventDefault(){}});
  delegation([delegator, worker]);
  assert.equal(statusText('delegator'), '● running');
  assert.ok(ids.counts.textContent.includes('2 running') && !ids.counts.textContent.includes('need'));
