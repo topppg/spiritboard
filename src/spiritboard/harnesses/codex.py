@@ -110,6 +110,7 @@ def parse(profile: SourceProfile, rows: list[dict], mtime: float) -> dict | None
         out["name"] = out["name"] or f"Codex {native[:8]}"
     last_state_time = None
     last_reply = ""
+    pending_input: dict[str, bool] = {}
     for row in rows:
         stamp = utc_time(row.get("timestamp"))
         if stamp and (out["last_seen"] is None or stamp > out["last_seen"]):
@@ -118,21 +119,37 @@ def parse(profile: SourceProfile, rows: list[dict], mtime: float) -> dict | None
         if kind == READ_GAP:
             # The header's request and reply predate the unread middle; the scan searches back.
             out["task"], last_reply = TEXT_HIDDEN, ""
+            if pending_input:
+                out.update(
+                    state="unknown",
+                    activity="Transcript middle not read",
+                    evidence="Codex transcript: unread middle; inferred session state",
+                )
+            pending_input.clear()
             continue
         p = row.get("payload", {})
         if not isinstance(p, dict):
             continue
         state, activity, evidence = None, None, None
+        current = stamp is None or last_state_time is None or stamp >= last_state_time
         if kind == "event_msg":
             event = p.get("type")
             if event in {"task_started", "turn_started", "user_message"}:
                 state, activity, evidence = "working", "Turn started", str(event)
+                if current:
+                    pending_input.clear()
             elif event in {"task_complete", "turn_complete", "turn_aborted"}:
                 # An idle session reads best as its last reply, when text is allowed.
                 reply = reply_text(p.get("last_agent_message")) if profile.include_text else ""
                 reply = reply or last_reply
                 state, evidence = "idle", str(event)
                 activity = reply or "Turn ended · session may resume"
+                if current:
+                    pending_input = {
+                        key: asynchronous
+                        for key, asynchronous in pending_input.items()
+                        if asynchronous and event != "turn_aborted"
+                    }
             if profile.include_text and event == "user_message" and not forked:
                 request = request_text(p.get("message"))
                 if request:
@@ -142,6 +159,16 @@ def parse(profile: SourceProfile, rows: list[dict], mtime: float) -> dict | None
             if event in {"function_call", "custom_tool_call", "local_shell_call"}:
                 state, evidence = "waiting_tool", str(event)
                 activity = last_reply or "Tool call recorded"
+                call_id, name = p.get("call_id"), p.get("name")
+                if (
+                    current
+                    and event == "function_call"
+                    and isinstance(name, str)
+                    and name in {"request_user_input", "request_user_input_async"}
+                    and isinstance(call_id, str)
+                    and call_id
+                ):
+                    pending_input[call_id] = name == "request_user_input_async"
             elif event in {
                 "function_call_output",
                 "custom_tool_call_output",
@@ -149,12 +176,22 @@ def parse(profile: SourceProfile, rows: list[dict], mtime: float) -> dict | None
             }:
                 state, evidence = "working", str(event)
                 activity = last_reply or "Tool result recorded"
+                call_id = p.get("call_id")
+                if (
+                    current
+                    and isinstance(call_id, str)
+                    and call_id in pending_input
+                    and not pending_input[call_id]
+                ):
+                    del pending_input[call_id]
             elif event == "message" and p.get("role") == "user":
+                state, activity, evidence = "working", "Turn started", "user message"
+                if current:
+                    pending_input.clear()
                 request = request_text(p.get("content")) if profile.include_text else ""
                 if request and not forked:
                     # A new request starts a new turn; the previous reply no longer describes it.
                     out["task"], last_reply = request, ""
-                    state, activity, evidence = "working", "Turn started", "user message"
             elif event in {"reasoning", "agent_message"} or (
                 event == "message" and p.get("role") == "assistant"
             ):
@@ -167,7 +204,13 @@ def parse(profile: SourceProfile, rows: list[dict], mtime: float) -> dict | None
                     # The parent's replies copied into this transcript end at its own assignment.
                     last_reply = ""
                 activity = last_reply or "Model activity recorded"
-        if state and (stamp is None or last_state_time is None or stamp >= last_state_time):
+        if current and pending_input:
+            state, activity, evidence = (
+                "waiting_user",
+                "Question awaiting your answer",
+                "input request",
+            )
+        if state and current:
             out.update(
                 state=state,
                 activity=activity,
@@ -176,6 +219,8 @@ def parse(profile: SourceProfile, rows: list[dict], mtime: float) -> dict | None
             last_state_time = stamp or last_state_time
     if forked and profile.include_text:
         out["task"] = ""
+    if 0 < len(pending_input) <= 64:
+        out["input_request_ids"] = ["tool:" + identity for identity in pending_input]
     out["last_seen"] = out["last_seen"] or mtime_iso(mtime)
     return out
 

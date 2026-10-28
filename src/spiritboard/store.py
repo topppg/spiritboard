@@ -247,6 +247,7 @@ class Store:
             "app",
             "archived",
             "title_source",
+            "input_request_ids",
         }
         data = {k: v for k, v in observation.items() if k in allowed}
         for key in ("run_id", "session_id", "name", "source", "account"):
@@ -266,6 +267,12 @@ class Store:
             raise ValueError("invalid title source")
         if data.get("state") not in STATES | TERMINAL | {"unknown"}:
             raise ValueError("invalid observed state")
+        if "input_request_ids" in data:
+            identifiers = data["input_request_ids"]
+            if not isinstance(identifiers, list) or not 1 <= len(identifiers) <= 64:
+                raise ValueError("invalid native input identifiers")
+            for identifier in identifiers:
+                text(identifier, 256)
         timestamp(data["last_seen"])
         if data.get("started_at"):
             timestamp(data["started_at"])
@@ -378,6 +385,18 @@ class Store:
         with self.lock:
             rows = [json.loads(r[0]) for r in self.db.execute("SELECT data FROM runs")]
             return self._public(rows, time.time(), self.started_at, limit)
+
+    def input_references(self) -> dict[str, list[str]]:
+        """Native input IDs needed for reconciliation, independent of display limits."""
+        with self.lock:
+            return {
+                run_id: json.loads(encoded)
+                for run_id, encoded in self.db.execute("""
+                    SELECT run_id,json_extract(data,'$.input_request_ids') FROM runs
+                    WHERE json_extract(data,'$.mode')='observation'
+                    AND json_type(data,'$.input_request_ids')='array'
+                    """)
+            }
 
     def snapshot_at(self, at: float, limit: int = 500) -> dict:
         """The board as journaled at `at`; liveness and archiving were never recorded."""

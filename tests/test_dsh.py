@@ -203,6 +203,14 @@ class DshTests(unittest.TestCase):
         for value in (*SECRETS, "Fix the flaky", "The test is fixed", "Login test"):
             self.assertNotIn(value, dumped)
 
+    def test_unread_middle_does_not_retain_an_unverified_header_approval(self):
+        from spiritboard.transcripts import READ_GAP
+
+        rows = [*conversation()[:3], event(4, "approval/asked", {"id": "old"}), {"type": READ_GAP}]
+        self.assertEqual(dsh.parse(self.profile(), rows, 0.0)["state"], "unknown")
+        rows.append(event(6, "tool/call", {"callId": "current"}))
+        self.assertEqual(dsh.parse(self.profile(), rows, 0.0)["state"], "waiting_tool")
+
     def test_subagent_links_to_parent_and_keeps_its_prompt(self):
         self.write(PARENT)
         rows = [

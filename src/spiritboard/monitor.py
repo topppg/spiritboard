@@ -5,8 +5,7 @@ from __future__ import annotations
 import threading
 import time
 
-from .focus import live_sessions, waiting_for_input
-from .model import TERMINAL
+from .focus import live_sessions
 from .sources import (
     DEFAULT_SCAN_LIMIT,
     MAX_SCAN_LIMIT,
@@ -52,7 +51,6 @@ class Monitor:
             "automatic_discovery": self.automatic,
         }
         self._live: dict[str, frozenset[str] | None] = {}
-        self._waiting_user: dict[str, str] = {}
         self._live_at = 0.0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -60,7 +58,6 @@ class Monitor:
 
     def scan_once(self) -> dict:
         counts, errors, stats = {}, {}, []
-        candidates: list[tuple[SourceProfile, dict]] = []
         with self._lock:
             profiles = list(self.profiles)
             if self.automatic:
@@ -84,13 +81,6 @@ class Monitor:
                         try:
                             self.store.observe(observation)
                             accepted += 1
-                            if (
-                                profile.kind == "claude"
-                                and not observation.get("parent_run_id")
-                                and not observation.get("archived")
-                                and observation["state"] not in TERMINAL
-                            ):
-                                candidates.append((profile, observation))
                         except Exception:
                             # Never expose exception text: it can contain paths/content.
                             errors[profile.id] = "An observation could not be stored"
@@ -111,18 +101,6 @@ class Monitor:
             # Process checks cost a ps/lsof call per profile; every few seconds is enough.
             if time.monotonic() - self._live_at >= LIVENESS_SECONDS:
                 self._live = {p.id: _live_or_unknown(p) for p in profiles}
-                waiting = {}
-                for profile, observation in candidates:
-                    native = observation["native_id"]
-                    if native not in (self._live.get(profile.id) or ()):
-                        continue
-                    try:
-                        if waiting_for_input(profile, native):
-                            waiting[observation["run_id"]] = observation["last_seen"]
-                    except Exception:
-                        # Terminal inspection is optional; never expose its text or errors.
-                        continue
-                self._waiting_user = waiting
                 self._live_at = time.monotonic()
             # Publish a complete scan atomically for HTTP readers; no root paths.
             self.profiles = profiles
@@ -133,7 +111,6 @@ class Monitor:
                 "source_stats": [dict(s) for s in stats],
                 "automatic_discovery": self.automatic,
                 "live": dict(self._live),
-                "waiting_user": dict(self._waiting_user),
             }
         return {"counts": counts, "errors": errors, "source_stats": stats}
 
@@ -169,5 +146,4 @@ class Monitor:
             "source_stats": [dict(s) for s in state["source_stats"]],
             "automatic_discovery": state["automatic_discovery"],
             "live": dict(state.get("live", {})),
-            "waiting_user": dict(state.get("waiting_user", {})),
         }

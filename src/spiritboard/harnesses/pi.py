@@ -388,4 +388,5 @@ HARNESS = Harness(
     session_pid=session_pid,
     resume=resume,
     goal=goal,
+    liveness_exact=False,
 )

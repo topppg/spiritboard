@@ -1,6 +1,6 @@
 """Find the app that owns a live native session and bring its window forward.
 
-Terminal inspection is read-only; activation never types into or signals an agent.
+Activation only: nothing here types into, signals or otherwise controls an agent.
 Resume commands are returned for the user to run; they are never executed.
 """
 
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import processes
-from .harnesses import HARNESSES, claude
+from .harnesses import HARNESSES
 from .harnesses.harness import SESSION_ID
 from .processes import Process
 from .sources import SourceProfile
@@ -219,44 +219,6 @@ def _cmux_cli(app: Path | None) -> str | None:
         if path.is_file() and os.access(path, os.X_OK):
             return str(path)
     return shutil.which("cmux")
-
-
-def waiting_for_input(profile: SourceProfile, native: str) -> bool:
-    """Recognize Claude's unpersisted choice prompt in its foreground cmux terminal."""
-    if profile.kind != "claude" or not SESSION_ID.fullmatch(native):
-        return False
-    try:
-        _, pid = claude.session_pid(Path(profile.root).expanduser(), native)
-        if not pid:
-            return False
-        metadata = _environment(pid)
-        workspace, panel = metadata.get("CMUX_WORKSPACE_ID"), metadata.get("CMUX_PANEL_ID")
-        socket = metadata.get("CMUX_SOCKET_PATH", "")
-        if not workspace or not panel or not _is_socket(socket):
-            return False
-        cli = _cmux_cli(None)
-        if not cli:
-            return False
-        # A suspended or background Claude can inherit the same pane as its foreground owner.
-        groups = processes.run(["ps", "-o", "pgid=", "-o", "tpgid=", "-p", str(pid)])
-        ids = groups[1].split() if groups and groups[0] == 0 else []
-        if len(ids) != 2 or not ids[0].isdigit() or int(ids[0]) <= 0 or ids[0] != ids[1]:
-            return False
-        result = processes.run(
-            [cli, "read-screen", "--workspace", workspace, "--surface", panel, "--lines", "40"],
-            {**os.environ, "CMUX_SOCKET_PATH": socket},
-        )
-        if not result or result[0] != 0 or len(result[1]) > 131_072:
-            return False
-        lines = [line.strip() for line in result[1].splitlines() if line.strip()]
-        return bool(
-            lines
-            and lines[-1] == "Enter to select · ↑/↓ to navigate · Esc to cancel"
-            and any(re.fullmatch(r"(?:❯\s*)?\d+\. Type something\.", x) for x in lines[-12:])
-            and any(re.fullmatch(r"(?:❯\s*)?\d+\. Chat about this", x) for x in lines[-12:])
-        )
-    except (OSError, ValueError):
-        return False
 
 
 def _tmux_steps(env: dict[str, str], required: bool) -> tuple[Step, ...]:

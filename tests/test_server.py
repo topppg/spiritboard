@@ -367,46 +367,6 @@ if __name__ == "__main__":
 
 
 class LivenessSnapshotTests(unittest.TestCase):
-    def test_pending_input_overlays_only_the_matching_live_current_observation(self):
-        from types import SimpleNamespace
-
-        seen = "2026-10-20T08:00:00Z"
-        store = Store()
-        self.addCleanup(store.close)
-        profile = {"id": "cl", "kind": "claude", "label": "Claude"}
-        observed = {
-            "profiles": [profile],
-            "source_errors": {},
-            "source_stats": [],
-            "automatic_discovery": False,
-            "live": {"cl": {"session-111"}},
-            "waiting_user": {"cl:session-111": seen},
-        }
-        base = {
-            "source": "claude",
-            "account": "invented",
-            "name": "Invented question",
-            "state": "working",
-            "last_seen": seen,
-            "session_id": "cl:observed",
-        }
-        store.observe({**base, "run_id": "cl:session-111"})
-        server = Collector(store, TOKEN, monitor=SimpleNamespace(public_state=lambda: observed))
-        self.addCleanup(server.server_close)
-        current = server.snapshot()["runs"][0]
-        self.assertEqual((current["state"], current["health"]), ("waiting_user", "stale"))
-        self.assertEqual(current["last_seen"], seen)
-        self.assertEqual(store.snapshot()["runs"][0]["state"], "working")
-        self.assertEqual(server.snapshot(time.time())["runs"][0]["state"], "working")
-        observed["waiting_user"] = {"cl:session-111": "2026-10-20T07:59:59Z"}
-        self.assertEqual(server.snapshot()["runs"][0]["state"], "working")
-        observed["waiting_user"] = {"cl:session-111": seen}
-        observed["live"] = {"cl": set()}
-        self.assertEqual(server.snapshot()["runs"][0]["state"], "working")
-        observed["live"] = {"cl": {"session-111"}}
-        store.observe({**base, "run_id": "cl:session-111", "state": "completed"})
-        self.assertEqual(server.snapshot()["runs"][0]["state"], "completed")
-
     def test_runs_carry_checked_liveness(self):
         from spiritboard.model import now
 

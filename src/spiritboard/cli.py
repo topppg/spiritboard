@@ -1,4 +1,4 @@
-"""Local commands. Never modifies native account or transcript storage."""
+"""Local commands; observing agents never modifies their accounts or transcripts."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from pathlib import Path
 
 from . import __version__
 from .harnesses import HARNESSES
+from .input_events import InputSignals
 from .launcher import Instance, LaunchError, default_data_dir, running_url
 from .server import Collector
 from .sources import discover_profiles, load_profiles
@@ -137,6 +138,11 @@ def serve_dashboard(args: argparse.Namespace) -> int:
             server = Collector(store, token, port=0, **retention)
         resources.callback(server.server_close)
         resources.callback(server.stopping.set)
+        if not args.demo and (args.config or args.watch or not args.no_discovery):
+            signals = InputSignals(args.data_dir / "inputs.sqlite3")
+            signals.prune(native_requests=store.input_references())
+            resources.callback(signals.close)
+            server.input_signals = signals
         from .summary_providers import SummaryProviders
 
         providers = SummaryProviders(
@@ -300,6 +306,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     prune.add_argument("--data-dir", type=Path)
     prune.add_argument("--older-than-days", type=float, required=True)
+    inputs = sub.add_parser(
+        "inputs", help="install, remove or inspect native input-status adapters"
+    )
+    inputs.add_argument("operation", choices=("install", "remove", "status"))
+    inputs.add_argument("--data-dir", type=Path)
+    inputs.add_argument("--config", type=Path)
+    inputs.add_argument("--source", action="append", choices=tuple(HARNESSES))
+    inputs.add_argument("--profile-id", action="append")
+    inputs.add_argument("--opencode-config-dir", type=Path)
+    event = sub.add_parser("input-event", help="receive a native lifecycle event on stdin")
+    event.add_argument("--source", required=True, choices=tuple(HARNESSES))
+    event.add_argument("--profile-id", required=True)
+    event.add_argument("--event")
+    event.add_argument("--data-dir", type=Path)
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or (argv[0].startswith("-") and argv[0] not in {"-h", "--help", "--version"}):
         argv.insert(0, "serve")
@@ -331,6 +351,40 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.data_dir is None:
             args.data_dir = default_data_dir(demo=args.command == "serve" and args.demo)
+        if args.command == "input-event":
+            from .input_receive import receive
+
+            return receive(args.source, args.profile_id, args.event, args.data_dir, sys.stdin)
+        if args.command == "inputs":
+            from .input_install import install
+
+            if args.operation == "status":
+                signals = InputSignals(args.data_dir / "inputs.sqlite3")
+                try:
+                    print(json.dumps({"profiles": signals.coverage()}))
+                finally:
+                    signals.close()
+                return 0
+            profiles = load_profiles(args.config) if args.config else discover_profiles()
+            if args.source:
+                profiles = [p for p in profiles if p.kind in args.source]
+            if args.profile_id:
+                profiles = [p for p in profiles if p.id in args.profile_id]
+                if {p.id for p in profiles} != set(args.profile_id):
+                    raise ValueError("A selected input profile is unavailable")
+            print(
+                json.dumps(
+                    {
+                        "profiles": install(
+                            profiles,
+                            args.data_dir,
+                            remove=args.operation == "remove",
+                            opencode_config=args.opencode_config_dir,
+                        )
+                    }
+                )
+            )
+            return 0
         if args.command == "demo":
             from .demo import run_demo
 

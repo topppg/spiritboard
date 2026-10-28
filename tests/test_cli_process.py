@@ -162,6 +162,83 @@ class CliProcessTests(unittest.TestCase):
             self.ready(restarted, self.data)["instance_id"], metadata["instance_id"]
         )
 
+    def test_native_input_without_transcript_writes_survives_board_restart(self) -> None:
+        profile = self.root / "invented-claude"
+        logs = profile / "projects" / "invented"
+        logs.mkdir(parents=True)
+        transcript = logs / "session-111.jsonl"
+        original = (
+            json.dumps(
+                {
+                    "type": "user",
+                    "sessionId": "session-111",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "message": {"content": "Synthetic request"},
+                }
+            )
+            + "\n"
+        )
+        transcript.write_text(original)
+        config = self.root / "profiles.json"
+        config.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "invented",
+                        "kind": "claude",
+                        "label": "Invented",
+                        "root": str(profile),
+                    }
+                ]
+            )
+        )
+        arguments = ["--config", str(config), "--no-open", "--port", "0", "--retention-days", "0"]
+        process = self.launch(*arguments)
+        metadata = self.ready(process, self.data)
+
+        def current(url: str) -> dict:
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                snapshot = json.loads(self.request(url, "/api/snapshot")[1])
+                if snapshot["runs"]:
+                    return snapshot["runs"][0]
+                time.sleep(0.05)
+            self.fail("Synthetic observation did not arrive")
+
+        self.assertEqual(current(metadata["url"])["state"], "working")
+        payload = {"session_id": "session-111", "request_id": "choice-one"}
+        callback = self.command(
+            "input-event", "--source", "claude", "--profile-id", "invented", "--event", "request"
+        )
+        emitted = subprocess.run(
+            callback,
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            env=self.environment,
+            cwd=self.second,
+            timeout=5,
+        )
+        self.assertEqual((emitted.returncode, emitted.stdout, emitted.stderr), (0, "", ""))
+        self.assertEqual(current(metadata["url"])["state"], "waiting_user")
+        self.stop(process)
+        restarted = self.launch(*arguments)
+        url = self.ready(restarted, self.data)["url"]
+        self.assertEqual(current(url)["state"], "waiting_user")
+        callback[-1] = "resolve"
+        answered = subprocess.run(
+            callback,
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            env=self.environment,
+            cwd=self.second,
+            timeout=5,
+        )
+        self.assertEqual(answered.returncode, 0)
+        self.assertEqual(current(url)["state"], "working")
+        self.assertEqual(transcript.read_text(), original)
+
     @unittest.skipUnless(os.name == "posix", "Windows terminate does not send Ctrl-C")
     def test_interrupt_during_startup_cleans_up_and_allows_restart(self) -> None:
         marker = self.root / "startup-paused"
