@@ -13,6 +13,14 @@ session details show whether input detection is transcript-only, configured, or
 has observed lifecycle events. Observing some events does not establish complete
 coverage for every tool or custom agent host.
 
+Explicit native execution, resume and turn-end events also update an older
+transcript's execution state. The board uses their observation time for freshness,
+sorting, filters and turn notifications while preserving transcript timestamps
+and history.
+A request-resolution event alone does not establish that the agent is working.
+Execution evidence becomes stale after 60 seconds without another report; an open
+process alone cannot establish continued work during a long silent operation.
+
 ## Setup
 
 Install or remove only Spiritboard's named hooks/extensions explicitly:
@@ -111,9 +119,11 @@ The synthetic stdin for that command is:
 
 The matching answer uses `--event resolve` and the same session/request IDs.
 `kind` is `question` or `approval`; actions are `request`, `resolve`, `resume`
-(new user turn), `idle` (finished turn), and `close` (session ended). IDs must be
-scoped to the profile/session. Use a new ID for each interaction when native IDs
-are available; provide `occurred_at` as an ISO timestamp when replaying events so
+(new user turn), `idle` (finished turn), and `close` (session ended). The
+`resume`, `idle` and `close` boundaries clear earlier requests. Runtime status
+reports use `active` or `inactive` to report working or idle without clearing unanswered input, such
+as an asynchronous question that outlives a turn. IDs must be scoped to the
+profile/session. Use a new ID for each interaction when native IDs are available; provide `occurred_at` as an ISO timestamp when replaying events so
 duplicates and out-of-order delivery retain their original ordering.
 
 Claude/Codex native hook payloads and OpenCode/Pi plugin events are normalized by

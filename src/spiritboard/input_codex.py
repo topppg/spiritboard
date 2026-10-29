@@ -73,7 +73,7 @@ def events(profile_id: str, event_name: str, payload: dict[str, object]) -> list
                 ("waitingOnApproval", "approval"),
                 ("waitingOnUserInput", "question"),
             )
-        ]
+        ] + [signal("active" if status["type"] == "active" else "inactive")]
     if event_name in {"thread/closed", "SessionEnd"}:
         return [signal("close")]
     if event_name == "UserPromptSubmit":

@@ -935,6 +935,26 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  assert.ok(flatten(rowOf('old-input')).find(x => x.className === 'cell seen').textContent.includes('2h'));
  docListeners.keydown({key:'a', target:{tagName:'BODY'}, preventDefault(){}});
  stream.listeners.snapshot({data:JSON.stringify(snapshot)}); await tick();
+ // A native lifecycle update wakes an old transcript immediately, including filtered views.
+ const nativeWorking = run('native-active', null, 'Native active', {last_seen:old, state_observed_at:now, health:'observed', live:true});
+ stream.listeners.snapshot({data:JSON.stringify({...snapshot,runs:[nativeWorking]})}); await tick();
+ assert.equal(statusText('native-active'), '● running');
+ assert.equal(flatten(rowOf('native-active')).find(x => x.className === 'cell seen').textContent, 'now');
+ docListeners.keydown({key:'e', target:{tagName:'BODY'}, preventDefault(){}});
+ assert.ok(rowOf('native-active'), 'new lifecycle evidence must survive the history window');
+ const nativeIdle = {...nativeWorking,state:'idle'};
+ stream.listeners.snapshot({data:JSON.stringify({...snapshot,runs:[nativeIdle]})}); await tick();
+ assert.equal(statusText('native-active'), '◐ your turn');
+ rowOf('native-active').listeners.click(); await tick();
+ assert.ok(detail().textContent.includes('Your turn · finished just now'));
+ const restNative = () => flatten(detail()).find(x => x.className === 'link rest-link');
+ restNative().listeners.click();
+ assert.equal(statusText('native-active'), '☾ at rest');
+ const laterNative = new Date(Date.parse(now) + 1000).toISOString();
+ stream.listeners.snapshot({data:JSON.stringify({...snapshot,server_time:laterNative,runs:[{...nativeIdle,state_observed_at:laterNative}]})}); await tick();
+ assert.equal(statusText('native-active'), '◐ your turn', 'a new native turn clears the rest mark');
+ docListeners.keydown({key:'a', target:{tagName:'BODY'}, preventDefault(){}});
+ stream.listeners.snapshot({data:JSON.stringify(snapshot)}); await tick();
  // Direct API usage has no dollar receipt; never call it free or ChatGPT plan usage.
  for (const provider of ['openai', 'anthropic']) {
    stream.listeners.snapshot({data:JSON.stringify({...snapshot,ai:{enabled:true,status:'ready',provider,api_calls:1,subscription_calls:0,known_cost_usd:0,actual_cost_usd:null,unknown_cost_calls:1}})});

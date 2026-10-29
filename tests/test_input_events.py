@@ -1,10 +1,93 @@
 """Synthetic native lifecycle events, independent of terminals and transcript writes."""
 
+import sqlite3
 from pathlib import Path
 
 import pytest
 
 from spiritboard.input_events import InputEvent, InputSignals
+
+
+def test_existing_aggregate_status_does_not_backfill_explicit_lifecycle(tmp_path: Path) -> None:
+    directory = tmp_path / "private"
+    directory.mkdir(mode=0o700)
+    path = directory / "inputs.sqlite3"
+    with sqlite3.connect(path) as database:
+        database.execute("""
+            CREATE TABLE input_runs(profile TEXT NOT NULL,native TEXT NOT NULL,
+                reset_at REAL NOT NULL,state TEXT NOT NULL,state_at REAL NOT NULL,
+                PRIMARY KEY(profile,native))
+        """)
+        database.execute("INSERT INTO input_runs VALUES('work','session-111',123,'working',124)")
+    path.chmod(0o600)
+    signals = InputSignals(path)
+    try:
+        status = signals.snapshot()["work:session-111"]
+        assert status.lifecycle_state == ""
+        assert status.lifecycle_at == ""
+    finally:
+        signals.close()
+
+
+@pytest.mark.parametrize("action", ["resume", "idle", "close", "active", "inactive"])
+def test_explicit_lifecycle_persists_separately_from_request_resolution(
+    tmp_path: Path,
+    action: str,
+) -> None:
+    path = tmp_path / "private" / "inputs.sqlite3"
+    signals = InputSignals(path)
+    stamp = "2026-01-01T00:00:02+00:00"
+    signals.record(InputEvent("work", "session-111", action, occurred_at=stamp))
+    signals.record(InputEvent("work", "session-111", "resolve", "same-time", occurred_at=stamp))
+    signals.record(
+        InputEvent(
+            "work",
+            "session-111",
+            "resolve",
+            "later",
+            occurred_at="2026-01-01T00:00:03Z",
+        )
+    )
+    signals.record(
+        InputEvent(
+            "work",
+            "session-111",
+            "resume",
+            occurred_at="2026-01-01T00:00:01Z",
+        )
+    )
+    signals.close()
+    signals = InputSignals(path)
+    try:
+        status = signals.snapshot()["work:session-111"]
+        assert status.state == "working"
+        assert (
+            status.lifecycle_state
+            == {
+                "resume": "working",
+                "idle": "idle",
+                "close": "closed",
+                "active": "working",
+                "inactive": "idle",
+            }[action]
+        )
+        assert status.lifecycle_at == stamp
+        signals.prune(before="2026-01-03T00:00:00Z")
+        assert signals.db.execute("SELECT COUNT(*) FROM input_lifecycle").fetchone()[0] == 0
+    finally:
+        signals.close()
+
+
+def test_resolution_has_no_lifecycle_and_disabling_profile_removes_lifecycle() -> None:
+    signals = InputSignals()
+    try:
+        signals.record(InputEvent("work", "session-111", "resolve", "one"))
+        assert signals.snapshot()["work:session-111"].lifecycle_state == ""
+        signals.record(InputEvent("work", "session-111", "idle"))
+        signals.configure("work", "synthetic", enabled=False)
+        assert signals.db.execute("SELECT COUNT(*) FROM input_lifecycle").fetchone()[0] == 0
+    finally:
+        signals.close()
 
 
 def test_pending_questions_survive_time_other_requests_and_restarts(tmp_path: Path) -> None:

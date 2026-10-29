@@ -14,7 +14,7 @@ from pathlib import Path
 from .launcher import LaunchError, _private_directory, _regular_descriptor
 from .model import now, text, timestamp
 
-ACTIONS = {"request", "resolve", "resume", "idle", "close"}
+ACTIONS = {"request", "resolve", "resume", "idle", "close", "active", "inactive"}
 
 
 @dataclass(frozen=True)
@@ -47,6 +47,8 @@ class InputStatus:
     pending: int
     resolved_ids: frozenset[str] = frozenset()
     cleared_at: float = 0.0
+    lifecycle_state: str = ""
+    lifecycle_at: str = ""
 
 
 class InputSignals:
@@ -73,6 +75,9 @@ class InputSignals:
                 PRIMARY KEY(profile,native,request));
             CREATE TABLE IF NOT EXISTS input_integrations(
                 profile TEXT PRIMARY KEY, source TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS input_lifecycle(
+                profile TEXT NOT NULL, native TEXT NOT NULL, state TEXT NOT NULL,
+                state_at REAL NOT NULL, PRIMARY KEY(profile,native));
             CREATE TABLE IF NOT EXISTS input_aliases(
                 profile TEXT NOT NULL, native TEXT NOT NULL, alias TEXT NOT NULL,
                 request TEXT NOT NULL, PRIMARY KEY(profile,native,alias));
@@ -94,6 +99,7 @@ class InputSignals:
                 self.db.execute("DELETE FROM input_integrations WHERE profile=?", (profile_id,))
                 self.db.execute("DELETE FROM input_requests WHERE profile=?", (profile_id,))
                 self.db.execute("DELETE FROM input_runs WHERE profile=?", (profile_id,))
+                self.db.execute("DELETE FROM input_lifecycle WHERE profile=?", (profile_id,))
                 self.db.execute("DELETE FROM input_aliases WHERE profile=?", (profile_id,))
 
     def coverage(self) -> dict[str, str]:
@@ -113,7 +119,11 @@ class InputSignals:
     def record(self, event: InputEvent) -> None:
         stamp = timestamp(event.occurred_at)
         state = (
-            "closed" if event.action == "close" else "idle" if event.action == "idle" else "working"
+            "closed"
+            if event.action == "close"
+            else "idle"
+            if event.action in {"idle", "inactive"}
+            else "working"
         )
         reset = stamp if event.action in {"resume", "idle", "close"} else 0.0
         with self.lock:
@@ -171,6 +181,16 @@ class InputSignals:
                     """,
                     (event.profile_id, event.native_id, reset, state, stamp),
                 )
+                if event.action in {"resume", "idle", "close", "active", "inactive"}:
+                    self.db.execute(
+                        """
+                        INSERT INTO input_lifecycle VALUES(?,?,?,?)
+                        ON CONFLICT(profile,native) DO UPDATE SET
+                            state=excluded.state,state_at=excluded.state_at
+                        WHERE excluded.state_at>=input_lifecycle.state_at
+                        """,
+                        (event.profile_id, event.native_id, state, stamp),
+                    )
                 if event.action == "request":
                     self.db.execute(
                         """
@@ -202,10 +222,11 @@ class InputSignals:
         with self.lock:
             rows = self.db.execute("""
                 SELECT r.profile,r.native,r.state,r.state_at,
-                    COUNT(q.request),MAX(q.asked_at),r.reset_at
+                    COUNT(q.request),MAX(q.asked_at),r.reset_at,l.state,l.state_at
                 FROM input_runs r LEFT JOIN input_requests q
                     ON r.profile=q.profile AND r.native=q.native
                     AND q.asked_at>r.reset_at AND q.resolved_at IS NULL
+                LEFT JOIN input_lifecycle l ON l.profile=r.profile AND l.native=r.native
                 GROUP BY r.profile,r.native
                 """).fetchall()
             resolved: dict[str, set[str]] = {}
@@ -222,8 +243,22 @@ class InputSignals:
                 pending,
                 frozenset(resolved.get(f"{profile}:{native}", ())),
                 reset_at,
+                lifecycle_state or "",
+                datetime.fromtimestamp(lifecycle_at, UTC).isoformat()
+                if lifecycle_at is not None
+                else "",
             )
-            for profile, native, state, state_at, pending, asked, reset_at in rows
+            for (
+                profile,
+                native,
+                state,
+                state_at,
+                pending,
+                asked,
+                reset_at,
+                lifecycle_state,
+                lifecycle_at,
+            ) in rows
         }
 
     def prune(
@@ -283,6 +318,11 @@ class InputSignals:
                     """,
                     (cutoff,),
                 )
+                self.db.execute("""
+                    DELETE FROM input_lifecycle WHERE NOT EXISTS(
+                        SELECT 1 FROM input_runs r
+                        WHERE r.profile=input_lifecycle.profile AND r.native=input_lifecycle.native)
+                    """)
                 self.db.execute("COMMIT")
             except Exception:
                 self.db.execute("ROLLBACK")

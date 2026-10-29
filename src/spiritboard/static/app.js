@@ -78,20 +78,21 @@
     if (profile.input_detection === "configured") return "Configured · waiting for first event";
     return "Transcript only · unrecorded questions or approvals may be missed";
   }
+  const observedAt = (run) => run.state_observed_at || run.last_seen;
   function healthOf(run) {
     const health = typeof run.health === "object" ? run.health?.state : run.health;
     if (health === "observed" || terminal.has(run.state)) return health || "unknown";
-    const last = time(run.last_seen);
+    const last = time(observedAt(run));
     if (health === "fresh" && last !== null && serverNow() - last > (state.snapshot?.stale_after_seconds || 30) * 1000) return "stale";
     return health || "unknown";
   }
-  // A rest mark holds the turn's last_seen, so any later activity clears it.
+  // A rest mark holds the latest turn observation, so later activity clears it.
   function loadRested() {
     try { return new Map(Object.entries(JSON.parse(localStorage.getItem(REST_KEY)) || {})); } catch (_) { return new Map(); }
   }
   function toggleRest(run) {
-    if (state.rested.get(run.run_id) === run.last_seen) state.rested.delete(run.run_id); else state.rested.set(run.run_id, run.last_seen);
-    const current = new Map(state.latest.runs.map((r) => [r.run_id, r.last_seen]));
+    if (state.rested.get(run.run_id) === observedAt(run)) state.rested.delete(run.run_id); else state.rested.set(run.run_id, observedAt(run));
+    const current = new Map(state.latest.runs.map((r) => [r.run_id, observedAt(r)]));
     [...state.rested].filter(([id, seen]) => current.get(id) !== seen).forEach(([id]) => state.rested.delete(id));
     try { localStorage.setItem(REST_KEY, JSON.stringify(Object.fromEntries(state.rested))); } catch (_) { /* rest marks are a convenience */ }
     render();
@@ -108,8 +109,8 @@
     // An unanswered approval stops a transcript from changing; it still needs you.
     if (run.state === "waiting_user") return { key: "needs", glyph: "◐", text: "needs you" };
     // A top-level session that recently finished its turn is waiting for your next direction.
-    if (run.state === "idle" && !run.parent_run_id && serverNow() - (time(run.last_seen) || 0) <= (run.live === true ? OPEN_TURN_WINDOW : QUIET_WINDOW)) {
-      if (!state.past && state.rested.get(run.run_id) === run.last_seen) return { key: "rest", turn: true, glyph: "☾", text: "at rest" };
+    if (run.state === "idle" && !run.parent_run_id && serverNow() - (time(observedAt(run)) || 0) <= (run.live === true ? OPEN_TURN_WINDOW : QUIET_WINDOW)) {
+      if (!state.past && state.rested.get(run.run_id) === observedAt(run)) return { key: "rest", turn: true, glyph: "☾", text: "at rest" };
       return { key: "needs", turn: true, glyph: "◐", text: "your turn" };
     }
     if (run.state === "idle" && run.live === true && !run.parent_run_id) return { key: "idle", glyph: "◌", text: "open · idle" };
@@ -168,10 +169,10 @@
       // An open terminal is never history, however long it idles.
       if (status.key === "idle" && run.live === true) return true;
       // Long-idle open sessions, quiet and closed ones stay under "all" after 30 minutes.
-      return !["quiet", "closed", "idle"].includes(status.key) || serverNow() - (time(run.last_seen) || 0) <= QUIET_WINDOW;
+      return !["quiet", "closed", "idle"].includes(status.key) || serverNow() - (time(observedAt(run)) || 0) <= QUIET_WINDOW;
     }
     const window = Number($("window-filter").value);
-    return !window || serverNow() - (time(run.last_seen) || 0) <= window;
+    return !window || serverNow() - (time(observedAt(run)) || 0) <= window;
   }
   function matches(run) {
     const query = $("search").value.toLowerCase().trim();
@@ -197,7 +198,7 @@
     });
     const list = [...map.values()].sort((a, b) => a.key.localeCompare(b.key));
     if (paint) state.colors = new Map(list.map((h, i) => [h.key, PALETTE[i % PALETTE.length]]));
-    list.forEach((h) => { h.rate = h.runs.reduce((sum, run) => sum + rateOf(run.run_id), 0); h.latest = h.runs.reduce((m, run) => Math.max(m, time(run.last_seen) || 0), 0); });
+    list.forEach((h) => { h.rate = h.runs.reduce((sum, run) => sum + rateOf(run.run_id), 0); h.latest = h.runs.reduce((m, run) => Math.max(m, time(observedAt(run)) || 0), 0); });
     return list;
   }
 
@@ -239,7 +240,7 @@
   }
   function activeStatuses(runs) {
     // Same scope as the active view: long-quiet history is not counted.
-    return runs.filter((run) => !terminal.has(run.state) && !run.archived && (statusOf(run).key !== "quiet" || serverNow() - (time(run.last_seen) || 0) <= QUIET_WINDOW)).map(statusOf);
+    return runs.filter((run) => !terminal.has(run.state) && !run.archived && (statusOf(run).key !== "quiet" || serverNow() - (time(observedAt(run)) || 0) <= QUIET_WINDOW)).map(statusOf);
   }
   const BUSY = new Set(["running", "waiting", "unknown"]);
   function renderCounts() {
@@ -454,7 +455,7 @@
     if (state.sort === "agent") return nameOf(run).toLowerCase();
     if (state.sort === "doing") return doingOf(run, statusOf(run)).text.toLowerCase();
     if (state.sort === "rate") return rateOf(run.run_id);
-    return time(run.last_seen) || 0;
+    return time(observedAt(run)) || 0;
   }
   function renderSort() {
     document.querySelectorAll("[data-sort]").forEach((button) => {
@@ -492,7 +493,7 @@
     const ranks = new Map();
     const rank = (run, path = new Set()) => {
       if (ranks.has(run.run_id)) return ranks.get(run.run_id);
-      const value = { rank: workRank(run), seen: time(run.last_seen) || 0 };
+      const value = { rank: workRank(run), seen: time(observedAt(run)) || 0 };
       if (path.has(run.run_id)) return value;
       const next = new Set(path); next.add(run.run_id);
       (children.get(run.run_id) || []).filter((c) => visible.has(c.run_id)).forEach((c) => { const b = rank(c, next); value.rank = Math.min(value.rank, b.rank); value.seen = Math.max(value.seen, b.seen); });
@@ -621,8 +622,8 @@
       const bar = node("span", null, "bar"); bar.style.width = `${Math.max(2, Math.round(rate / maxRate * 48))}px`;
       rateCell.append(node("span", rate, "num"), bar);
     }
-    const last = node("span", seenText(run.last_seen), "cell seen");
-    last.dataset.seen = run.last_seen || "";
+    const last = node("span", seenText(observedAt(run)), "cell seen");
+    last.dataset.seen = observedAt(run) || "";
     button.append(statusCell, agent, doingCell, rateCell, last);
     // A session that closed is asked again if it comes back, perhaps in another app.
     if (!mayOpen(run)) state.openTargets.delete(run.run_id);
@@ -799,16 +800,16 @@
     if (run.project) fact("project", run.project);
     if (run.started_at && (terminal.has(run.state) || status.key === "closed")) fact("ran for", age(run.started_at, time(run.ended_at) || serverNow()));
     else if (run.started_at) fact("started", ago(run.started_at));
-    const seen = node("span", seenText(run.last_seen)); seen.dataset.seen = run.last_seen || "";
+    const seen = node("span", seenText(observedAt(run))); seen.dataset.seen = observedAt(run) || "";
     fact("last seen", seen);
     main.append(head, meta);
     // One status line under the title: what state it is in and where to act.
     const line = (cls, glyph, text, where) => { const p = node("p", null, `state-line ${cls}`); p.append(node("span", glyph, "glyph"), ` ${text}`); if (where) p.append(node("span", ` · ${where}`, "where")); main.append(p); };
     if (status.key === "rest") line("g-rest", "☾", "At rest · you checked this turn", "back when the agent acts again");
-    else if (status.turn) line("g-needs", "◐", `Your turn · finished ${ago(run.last_seen)}`);
-    else if (run.archived) line("g-closed", "■", `Archived in ${run.app || "its app"} · last active ${ago(run.last_seen)}`);
-    else if (status.key === "closed") line("g-closed", "■", `Closed ${ago(run.last_seen)}`, "no running process owns this session");
-    else if (status.key === "needs") line("g-needs", "◐", `Needs you · ${run.input_status ? "reported" : "asked"} ${ago(run.input_status?.observed_at || run.last_seen)}`, parent ? `answer in “${nameOf(parent)}”` : "");
+    else if (status.turn) line("g-needs", "◐", `Your turn · finished ${ago(observedAt(run))}`);
+    else if (run.archived) line("g-closed", "■", `Archived in ${run.app || "its app"} · last active ${ago(observedAt(run))}`);
+    else if (status.key === "closed") line("g-closed", "■", `Closed ${ago(observedAt(run))}`, "no running process owns this session");
+    else if (status.key === "needs") line("g-needs", "◐", `Needs you · ${run.input_status ? "reported" : "asked"} ${ago(run.input_status?.observed_at || observedAt(run))}`, parent ? `answer in “${nameOf(parent)}”` : "");
     else if (status.key !== "running") line(`g-${status.key}`, status.glyph, status.text[0].toUpperCase() + status.text.slice(1));
     // A subagent's goal is the task its parent gave it, unless a summary exists.
     const goal = run.ai_summary?.text || (run.parent_run_id ? run.task : "");

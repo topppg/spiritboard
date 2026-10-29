@@ -141,7 +141,39 @@ def test_status_flags_have_independent_reserved_identity() -> None:
         },
     )
     assert any(row.action == "resolve" and row.request_id == question.request_id for row in active)
-    assert all(row.action == "resolve" and row.request_id for row in active)
+    assert all(row.action == "resolve" and row.request_id for row in active[:-1])
+    assert active[-1].action == "active"
+
+
+def test_idle_runtime_status_does_not_answer_unrelated_async_question() -> None:
+    signals = InputSignals()
+    try:
+        for event in events(
+            "profile",
+            "item/tool/requestUserInput",
+            {
+                "id": 42,
+                "params": {"threadId": "synthetic-thread", "itemId": "async-question"},
+            },
+        ):
+            signals.record(event)
+        idle = events(
+            "profile",
+            "thread/status/changed",
+            {
+                "params": {"threadId": "synthetic-thread", "status": {"type": "idle"}},
+            },
+        )
+        assert idle[-1].action == "inactive"
+        for event in idle:
+            signals.record(event)
+        status = signals.snapshot()["profile:synthetic-thread"]
+        assert status.state == "waiting_user"
+        assert status.pending == 1
+        assert status.lifecycle_state == "idle"
+        assert status.cleared_at == 0
+    finally:
+        signals.close()
 
 
 def test_invalid_shapes_and_unrelated_tools_do_not_fabricate_input() -> None:
