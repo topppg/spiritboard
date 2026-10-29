@@ -193,23 +193,44 @@ class Collector(ThreadingHTTPServer):
                     continue
                 native_requests = run.get("input_request_ids", [])
                 resolved = bool(native_requests) and set(native_requests) <= status.resolved_ids
-                new_turn = status.cleared_at > 0 and status.cleared_at >= timestamp(
-                    run["last_seen"]
-                )
+                transcript_at = timestamp(run["last_seen"])
+                lifecycle_at = timestamp(status.lifecycle_at) if status.lifecycle_at else 0
+                new_turn = status.cleared_at > 0 and status.cleared_at >= transcript_at
                 if status.state == "closed":
                     if new_turn:
                         run["live"] = False
                     continue
-                if (
+                input_resolved = (
                     run["state"] == "waiting_user"
                     and status.state != "waiting_user"
                     and (resolved or new_turn)
-                ):
+                )
+                if input_resolved:
                     run.update(
                         state=status.state,
                         activity="Input resolved",
                         evidence="Native lifecycle event: matching resolution or new turn",
                     )
+                if (
+                    status.lifecycle_state in {"working", "idle"}
+                    and lifecycle_at > transcript_at
+                    and status.state != "waiting_user"
+                    and run["state"] != "waiting_user"
+                ):
+                    if run.get("live") is False and not HARNESSES[run["source"]].liveness_exact:
+                        run["live"] = None
+                    run.update(
+                        state=status.lifecycle_state,
+                        state_observed_at=status.lifecycle_at,
+                        health="observed" if time.time() - lifecycle_at <= 60 else "stale",
+                    )
+                    if not input_resolved:
+                        run.update(
+                            activity="Turn ended"
+                            if status.lifecycle_state == "idle"
+                            else "Activity recorded",
+                            evidence="Native lifecycle event: newer execution state",
+                        )
                 if status.state == "waiting_user" and (
                     run.get("live") is not False or not HARNESSES[run["source"]].liveness_exact
                 ):
