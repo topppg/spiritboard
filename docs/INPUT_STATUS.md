@@ -69,6 +69,7 @@ Python environment used by the generated command must remain installed.
 | Codex | Recorded direct input tools; lifecycle hooks; app-server question, approval and runtime-status events when a host forwards its existing connection. | Matching result/request-resolution events or user/session lifecycle. Async tool acknowledgement and turn completion do not resolve an outstanding async question. Specialized tools can bypass hooks. |
 | OpenCode | Plugin `question.asked` and `permission.asked`. | Matching reply/rejection, disposal of the owning plugin instance. A plugin-loaded runtime supplies events independently of its TUI, IDE or desktop client. |
 | Pi | Extension `ui_prompt_start` for select, confirm, input, editor and custom dialogs. | Matching `ui_prompt_end`, genuine session start/replacement or shutdown. Nested dialogs share the harness's prompt span. |
+| Hermes | No native question or approval mapping is installed. | SQLite message activity cannot establish an unanswered prompt. Input status remains unknown unless a host forwards the shared event contract below. |
 | DeepSeek Harness | Persisted `approval/asked`. | Matching `approval/decided` or turn end. Missing decompression support or a truncated log can leave state unknown. |
 | Grok Bot | Cached unresolved widgets, forms and box requests. | Explicit resolution fields. Unrelated activity and the previous 24-hour cutoff no longer discard pending input. Cache coverage is limited by what the native app has downloaded. |
 

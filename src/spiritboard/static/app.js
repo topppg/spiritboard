@@ -15,7 +15,7 @@
   const MAX_ROWS = 300;
   const REST_KEY = "spiritboard.rested";
   const WIDTH_KEY = "spiritboard.columns";
-  const KIND_NAMES = { codex: "Codex", claude: "Claude", opencode: "opencode", pi: "Pi", dsh: "DeepSeek Harness", grokbot: "Grok Bot" };
+  const KIND_NAMES = { codex: "Codex", claude: "Claude", opencode: "opencode", pi: "Pi", hermes: "Hermes", dsh: "DeepSeek Harness", grokbot: "Grok Bot" };
   const state = { snapshot: null, selected: null, view: "active", sort: null, descending: false, order: [], frozen: new Map(), split: 0, colors: new Map(), events: [], nextCursor: 0, more: false, eventBusy: false, request: 0, fetching: false, live: false, lastSnapshotAt: 0, fingerprint: null, historyOpen: false, tableKey: "", target: null, targetNote: "", targetFallback: false, latest: null, past: null, pastRequest: 0, zoom: 600, chart: null, chartAt: 0, rested: loadRested(), editing: null, draft: "", folds: new Map(), openTargets: new Map(), openFlashes: new Map() };
   // Chart windows in seconds: heading, then the left and middle axis labels.
   const ZOOMS = { 600: ["last 10 minutes", "-10m", "-5m"], 3600: ["last hour", "-1h", "-30m"], 86400: ["last 24 hours", "-24h", "-12h"],

@@ -1,9 +1,9 @@
-# Local Codex, Claude, opencode, Pi, DeepSeek Harness and Grok Bot sources
+# Local Codex, Claude, opencode, Pi, Hermes, DeepSeek Harness and Grok Bot sources
 
 ## What works
 
-The collector can observe multiple Codex, Claude, opencode, Pi, DeepSeek Harness and
-Grok Bot storage profiles together.
+The collector can observe multiple Codex, Claude, opencode, Pi, Hermes, DeepSeek
+Harness and Grok Bot storage profiles together.
 Each profile has its own stable ID, label and transcript directory. The same
 native session ID in two profiles creates two separate dashboard runs. Labels
 describe storage profiles; they do **not** prove which account is signed in.
@@ -18,10 +18,12 @@ without a root conversation ID. Different profiles cannot share a collection.
 
 By default discovery runs again on every background scan, without requiring a
 four-profile configuration or restarting the dashboard when another profile
-appears. It checks the standard `.codex`, `.claude`, `.pi/agent` and `.dsh` directories, named
-`.codex-*` and `.claude-*` directories, `.codex-switch/profiles/*`, and the current process's
+appears. It checks the standard `.codex`, `.claude`, `.pi/agent`, `.hermes` and `.dsh`
+directories, named `.codex-*` and `.claude-*` directories, `.codex-switch/profiles/*`,
+`.hermes/profiles/*`, and the current process's
 `CODEX_HOME` / `CLAUDE_CONFIG_DIR` / `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR` /
-`DSH_HOME` / `GROK_BOT_HOME` selectors, and on macOS `~/Library/Application Support/Grok Bot`. Aliases pointing to the same storage
+`HERMES_HOME` / `DSH_HOME` / `GROK_BOT_HOME` selectors, and on macOS
+`~/Library/Application Support/Grok Bot`. Aliases pointing to the same storage
 directory are deduplicated. Distinct storage directories are **not** collapsed
 because they contain identical native session IDs: copied histories and separate
 accounts stay distinct. No account, authentication, key or credential file
@@ -141,7 +143,7 @@ request from the copied history, and its reply starts after its own `NEW_TASK`.
 Sessions are named by their own titles when text is shown: a Claude `/rename`
 (`custom-title`), else Claude's generated `ai-title`, the Codex thread name
 from the profile's `session_index.jsonl` (cached by size and mtime), and the
-opencode session `title`. This needs no summaries and makes no provider call.
+opencode or Hermes session `title`. This needs no summaries and makes no provider call.
 opencode excerpts come only from non-synthetic `text` parts (at most 4,000
 characters each); reasoning parts, tool titles, inputs and outputs are never
 selected, and tool names appear only with text enabled.
@@ -346,6 +348,10 @@ look for the live process that owns it; SDK runs are never eligible.
   session's `directory`, when the session is one of the live ones above and that
   directory has exactly one such process. An older session in a directory with a
   live process leaves liveness unknown (no focus, no resume).
+- **Hermes:** `runtime/active_sessions.json` identifies a session's process,
+  validated against its recorded process start time. Only an exact CLI owner can
+  select a terminal; gateway routes and unmatched live leases cannot. See the
+  Hermes section below for ownership and resume limits.
 - **DeepSeek Harness:** `lsof` on the session's `session.lock`; a holder that is
   the DeepSeek Harness app or its runtime is focused by activating the app
   (`open -b com.deepseek.dsh` or `open -a`). No resume command is offered: the
@@ -368,7 +374,7 @@ fixed argv lists (no shell) with short timeouts: `cmux select-workspace` /
 AppleScript that selects a matching iTerm2 session or Terminal tab, `open -b` /
 `open -a`, or `wmctrl -i -a`. Errors are generic. Resume commands are built from
 the session ID, the transcript's recorded working directory and the profile root.
-Every command explicitly sets `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `OPENCODE_DB`
+Every command explicitly sets `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `HERMES_HOME` or `OPENCODE_DB`
 (`cd <directory> && OPENCODE_DB=<db> opencode -s <id>`), including the
 default `~/.claude` / `~/.codex` / `opencode.db`, so an existing terminal's account override cannot
 select a different profile; Pi resumes by session file path instead. Resume is offered only when no live
@@ -408,6 +414,80 @@ falls outside the header/tail window.
 - **Resume.** `cd <cwd> && pi --session <session file>`, shell-quoted. The file
   path selects the session regardless of `PI_CODING_AGENT_DIR`.
 
+## Hermes sessions
+
+Hermes stores sessions in `$HERMES_HOME/state.db`, default `~/.hermes/state.db`.
+Named profiles under `~/.hermes/profiles/<name>` have their own database and
+remain separate Spiritboard profiles. Legacy `sessions/*.jsonl` exports are not
+the canonical storage and are not read. The adapter follows the upstream
+[session storage documentation](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/session-storage.md).
+
+Hermes 0.22.5 was checked through its real CLI and gateway against a local
+deterministic Chat Completions endpoint in a temporary home. The check exercised
+a terminal tool reading an invented probe, canonical SQLite writes, dashboard
+excerpts and text hiding, first-CLI ownership remaining unknown, graceful exit
+enabling resume, and an actual resume adding a second turn to the same session
+with a directly matched live PID. Paid-provider behavior and cloud sign-in remain
+unvalidated. Separate default and named profiles were also checked, including
+default-profile selection overriding Hermes's remembered active profile, named
+profile discovery and resume without modifying the default session's history.
+
+The database is opened read-only. Only session metadata and bounded active
+user/assistant message content supply titles, requests, replies and optional
+summary context. Tool results, tool-call arguments, reasoning, credentials and
+configuration files are not read into the board. `"include_text": false` hides
+the session title and message excerpts.
+
+- **Schema and cache.** Both `sessions` and `messages` must have the current
+  columns required by the adapter; missing columns yield no sessions and an
+  `unsupported_schema` coverage warning. Optional `sessions.session_key` maps
+  gateway route leases to canonical session IDs when present. Database and WAL
+  file metadata form a shared cache signature, invalidating all session
+  observations when either changes, including title edits and regenerated
+  messages. Archived sessions remain visible with an `archived` flag but are
+  excluded from summary scans.
+- **Messages and parents.** Only `active = 1` messages are current; inactive
+  generations are ignored. Message order follows the database ID, including
+  after edits or regeneration. Reads select at most the newest 40 active
+  messages, with up to 16,000 bytes of user/assistant content each; latest-request
+  fallback searches at most 200 active user messages under the same content cap.
+  Content is selected as a BLOB to preserve Hermes's NUL-prefixed structured
+  JSON. Structured content contributes text blocks only; malformed or truncated
+  JSON is omitted.
+  A `parent_session_id` becomes a subagent link only when `source` is `subagent`:
+  other parent links can describe compression continuations, branches or resets.
+- **State.** A latest user message or tool result implies `working`, an assistant
+  tool call implies `waiting_tool`, and a final assistant reply implies `idle`.
+  An assistant record without content or a finish reason implies `working`.
+  A recorded `ended_at` overrides message activity with inferred `idle`; it is
+  not a process check.
+- **Liveness.** The optional `runtime/active_sessions.json` registry records
+  lease IDs, PIDs and process start times, read as a regular JSON file
+  capped at 64 KiB. Spiritboard validates process identity to whole-second
+  precision before treating an exactly matched session as open, including an
+  idle CLI. Gateway leases may match `sessions.session_key` instead of the
+  canonical ID. A new CLI can lease an initial timestamp ID while its stored
+  session uses a different canonical ID; without a persisted mapping, that live
+  lease leaves profile ownership unknown and prevents unsafe resume. A valid
+  registry establishes closure only when it has no matching or unresolved live
+  owner. Missing, unreadable, invalid or oversized registry data also leaves
+  liveness unknown.
+  Multiple validated owners still establish that a session is live, but leave
+  focus unavailable. Transcript timestamps and `ended_at` alone never establish
+  whether a process is still open.
+- **Open and resume.** A single directly matched CLI owner uses the ordinary
+  terminal focus adapters. Gateway processes serve multiple sessions and are
+  never focused for a route lease. Resumed CLI leases that use the canonical
+  session ID can select their terminal. A verified closed session can offer
+  `HERMES_HOME=<profile root> hermes --resume <id>`, shell-quoted and in its
+  recorded working directory. Default and custom root homes also pass
+  `--profile default` to prevent Hermes's remembered active profile from changing
+  the selected home; named homes under `profiles/` already pin their profile.
+  Unknown ownership offers neither action.
+- **Input.** No Hermes hooks or question/approval mappings are installed.
+  Message activity cannot prove that a native question is unanswered. A host can
+  explicitly forward the [shared input event contract](INPUT_STATUS.md#shared-event-contract).
+
 ## Adding a harness
 
 Each agent harness is one module in `src/spiritboard/harnesses/` that builds a
@@ -432,5 +512,5 @@ registered kind and call only these fields:
 
 Build on `transcripts.py` (bounded no-follow readers, `walk_jsonl`, `safe`,
 `redact`, `ns`, `observation`) and `processes.py` (`ps`/`lsof` argv, no shell).
-Adding a harness means the module, its registry entry and synthetic tests; no
-other module changes.
+Adding a harness means the module, its registry entry, the `KIND_NAMES` display
+name in `static/app.js`, synthetic tests and source/coverage documentation.

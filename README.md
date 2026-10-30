@@ -6,8 +6,8 @@ Open it and immediately know which agents need your attention, what they're
 doing, and where to continue.
 
 Spiritboard is a local dashboard for every coding agent you run. Claude Code,
-Codex, opencode, Pi and DeepSeek Harness sessions, and the agents of the Grok Bot
-desktop app, from your terminals, your desktop apps and each of your accounts
+Codex, opencode, Pi, Hermes and DeepSeek Harness sessions, and the agents of the
+Grok Bot desktop app, from your terminals, your desktop apps and each of your accounts
 appear side by side, with what each one is working on, whether it is running,
 waiting for you or gone, and a button that takes you straight to it.
 
@@ -28,7 +28,7 @@ uvx spiritboard
 
 This runs the published [PyPI package](https://pypi.org/project/spiritboard/) and opens
 your local dashboard in the browser. No repo checkout or API key is needed. Supported
-Codex, Claude, opencode, Pi, DeepSeek Harness and Grok Bot storage is discovered
+Codex, Claude, opencode, Pi, Hermes, DeepSeek Harness and Grok Bot storage is discovered
 automatically, without opening authentication files or tables.
 
 Mac users can also use a standalone app with its own window and Dock icon. Signed Apple Silicon
@@ -95,6 +95,7 @@ for upgrades, removal and publishing.
 | **Codex** (CLI and ChatGPT app) | `~/.codex*`, `~/.codex-switch/profiles/*`, `CODEX_HOME` | the thread locks a codex process holds | its terminal tab, or the ChatGPT window | `codex resume <id>` |
 | **opencode** | `opencode.db`, read-only | an `opencode` process in the session's directory | its terminal | `opencode -s <id>` |
 | **Pi** | `~/.pi/agent/sessions`, `PI_CODING_AGENT_DIR` | a `pi` process in the session's directory | its terminal | `pi --session <file>` |
+| **Hermes** | `~/.hermes/state.db`, named profiles, `HERMES_HOME`, read-only | runtime registry + process start time; unmatched live leases leave ownership unknown | a directly matched CLI terminal | `hermes --resume <id>` when verified closed |
 | **DeepSeek Harness** | `~/.dsh` (zstd-compressed), `DSH_HOME` | the `session.lock` the app holds | the app window | not yet |
 | **Grok Bot** (macOS app) | the app's local cache, `GROK_BOT_HOME` | unknown: its agents run in the cloud | the exact agent in the app | — |
 | **Your own agents** | the Python SDK below | heartbeats | — | — |
@@ -103,6 +104,10 @@ Claude Code, Codex and opencode are checked against real sessions, and Pi agains
 a real Pi 0.73 session (reading, liveness and resume). The Claude desktop marker
 and DeepSeek Harness are built from each app's own code and documentation and
 covered by tests, but have seen little or no real data yet.
+Hermes 0.22.5 reading, liveness and resume were checked with the real CLI and a
+local deterministic model endpoint. Fresh CLI leases can use an ID different
+from the stored session, leaving ownership unknown; native question/approval
+detection is unknown too.
 Grok Bot is read from the app's local cache, whose undocumented format was observed
 on one machine and may change; unrecognized versions are skipped with a warning.
 New harnesses plug in as one module each (see [the source guide](https://github.com/topppg/spiritboard/blob/main/docs/SOURCES.md#adding-a-harness)).
@@ -130,9 +135,9 @@ New harnesses plug in as one module each (see [the source guide](https://github.
 
 - **What each one is doing.** The session's own title (your `/rename`, the
   Claude desktop app's title, Claude's generated title, the Codex thread name, the
-  opencode session title, a Pi `/name`, the DeepSeek Harness title or the Grok Bot
-  agent's name), retitled by the summary model once the goal moves on, its goal,
-  your latest request and
+  opencode session title, a Pi `/name`, the Hermes session title, the DeepSeek Harness
+  title or the Grok Bot agent's name), retitled by the summary model once the goal
+  moves on, its goal, your latest request and
   the agent's latest reply or commentary. Open a session and click its name to rename it in Spiritboard
   only; clear it to go back to the automatic title. Subagents sit under their parent,
   named by the task the parent gave them. Sessions the Claude desktop app runs
@@ -195,14 +200,16 @@ and rerun `uv run python scripts/benchmark_startup.py --samples 7` from a checko
   are not replayed. DeepSeek and Grok Bot also use their recorded input states.
   Setup is explicit and reversible; [coverage, setup and limitations](https://github.com/topppg/spiritboard/blob/main/docs/INPUT_STATUS.md)
   explain what each source can report.
-- **Discovery.** The standard `~/.claude`, `~/.codex`, `~/.pi/agent` and `~/.dsh`
+- **Discovery.** The standard `~/.claude`, `~/.codex`, `~/.pi/agent`, `~/.hermes` and `~/.dsh`
   folders, named variants such as `~/.claude-work` or `~/.codex-switch/profiles/*`,
   `CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `PI_CODING_AGENT_DIR` /
-  `PI_CODING_AGENT_SESSION_DIR` / `DSH_HOME`, Grok Bot's cache in
+  `PI_CODING_AGENT_SESSION_DIR` / `HERMES_HOME` / `DSH_HOME`, Grok Bot's cache in
   `~/Library/Application Support/Grok Bot` (macOS) or `GROK_BOT_HOME`, and
   opencode's `opencode.db` (and release-channel databases) in `$XDG_DATA_HOME/opencode` or
   `~/.local/share/opencode`, or `OPENCODE_DB`. The opencode database is opened
-  read-only. DeepSeek Harness logs are zstd-compressed: their text needs Python 3.14+
+  read-only, as is Hermes's `state.db`; Hermes named profiles under
+  `~/.hermes/profiles/<name>` are discovered too. DeepSeek Harness logs are
+  zstd-compressed: their text needs Python 3.14+
   or the `zstd` command; without either, its sessions are listed with liveness but
   no text. To choose sources yourself, write a private config and pass it:
 
@@ -222,12 +229,16 @@ and rerun `uv run python scripts/benchmark_startup.py --samples 7` from a checko
   without being read; change it with `--max-age-days N` (`0` reads everything).
 - **Liveness.** Every few seconds Spiritboard checks which sessions a live local
   process still owns, from Claude's `sessions/<pid>.json`, the Codex thread locks
-  and the DeepSeek Harness `session.lock` files. opencode and Pi record no
-  per-session owner. With N live `opencode` processes in a directory, its N most
+  and the DeepSeek Harness `session.lock` files. Hermes uses its
+  `runtime/active_sessions.json` registry matched against process start times.
+  opencode and Pi record no per-session owner. With N live `opencode` processes
+  in a directory, its N most
   recently updated top-level sessions and their children count as open. A live
   `pi` process marks that directory's most recent session open. A session is only
   marked closed when the relevant check can run. Grok Bot agents run in the cloud,
-  so their liveness is unknown.
+  so their liveness is unknown. A missing or unreadable Hermes registry also
+  leaves ownership unknown. An unmatched live Hermes lease blocks resume;
+  gateway routes can establish liveness but cannot select a terminal to focus.
 
 What is read, and the bounds on it, are in the [source guide](https://github.com/topppg/spiritboard/blob/main/docs/SOURCES.md).
 
