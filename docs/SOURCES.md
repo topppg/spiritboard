@@ -349,8 +349,9 @@ look for the live process that owns it; SDK runs are never eligible.
   directory has exactly one such process. An older session in a directory with a
   live process leaves liveness unknown (no focus, no resume).
 - **Hermes:** `runtime/active_sessions.json` identifies a session's process,
-  validated against its recorded process start time. Missing or ambiguous
-  ownership leaves focus and resume unavailable; see the Hermes section below.
+  validated against its recorded process start time. Only an exact CLI owner can
+  select a terminal; gateway routes and unmatched live leases cannot. See the
+  Hermes section below for ownership and resume limits.
 - **DeepSeek Harness:** `lsof` on the session's `session.lock`; a holder that is
   the DeepSeek Harness app or its runtime is focused by activating the app
   (`open -b com.deepseek.dsh` or `open -a`). No resume command is offered: the
@@ -421,6 +422,16 @@ remain separate Spiritboard profiles. Legacy `sessions/*.jsonl` exports are not
 the canonical storage and are not read. The adapter follows the upstream
 [session storage documentation](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/session-storage.md).
 
+Hermes 0.22.5 was checked through its real CLI and gateway against a local
+deterministic Chat Completions endpoint in a temporary home. The check exercised
+a terminal tool reading an invented probe, canonical SQLite writes, dashboard
+excerpts and text hiding, first-CLI ownership remaining unknown, graceful exit
+enabling resume, and an actual resume adding a second turn to the same session
+with a directly matched live PID. Paid-provider behavior and cloud sign-in remain
+unvalidated. Separate default and named profiles were also checked, including
+default-profile selection overriding Hermes's remembered active profile, named
+profile discovery and resume without modifying the default session's history.
+
 The database is opened read-only. Only session metadata and bounded active
 user/assistant message content supply titles, requests, replies and optional
 summary context. Tool results, tool-call arguments, reasoning, credentials and
@@ -429,10 +440,12 @@ the session title and message excerpts.
 
 - **Schema and cache.** Both `sessions` and `messages` must have the current
   columns required by the adapter; missing columns yield no sessions and an
-  `unsupported_schema` coverage warning. Database and WAL file metadata form a
-  shared cache signature, invalidating all session observations when either
-  changes, including title edits and regenerated messages. Archived sessions
-  remain visible with an `archived` flag but are excluded from summary scans.
+  `unsupported_schema` coverage warning. Optional `sessions.session_key` maps
+  gateway route leases to canonical session IDs when present. Database and WAL
+  file metadata form a shared cache signature, invalidating all session
+  observations when either changes, including title edits and regenerated
+  messages. Archived sessions remain visible with an `archived` flag but are
+  excluded from summary scans.
 - **Messages and parents.** Only `active = 1` messages are current; inactive
   generations are ignored. Message order follows the database ID, including
   after edits or regeneration. Reads select at most the newest 40 active
@@ -449,16 +462,23 @@ the session title and message excerpts.
   A recorded `ended_at` overrides message activity with inferred `idle`; it is
   not a process check.
 - **Liveness.** The optional `runtime/active_sessions.json` registry records
-  explicit session IDs, PIDs and process start times, read as a regular JSON file
+  lease IDs, PIDs and process start times, read as a regular JSON file
   capped at 64 KiB. Spiritboard validates process identity to whole-second
-  precision before treating a matching session as open, including an idle CLI.
-  A valid registry with no matching live owner establishes closure. Missing,
-  unreadable, invalid or oversized registry data leaves liveness unknown.
+  precision before treating an exactly matched session as open, including an
+  idle CLI. Gateway leases may match `sessions.session_key` instead of the
+  canonical ID. A new CLI can lease an initial timestamp ID while its stored
+  session uses a different canonical ID; without a persisted mapping, that live
+  lease leaves profile ownership unknown and prevents unsafe resume. A valid
+  registry establishes closure only when it has no matching or unresolved live
+  owner. Missing, unreadable, invalid or oversized registry data also leaves
+  liveness unknown.
   Multiple validated owners still establish that a session is live, but leave
   focus unavailable. Transcript timestamps and `ended_at` alone never establish
   whether a process is still open.
-- **Open and resume.** A validated owner uses the ordinary terminal focus
-  adapters. A verified closed session can offer
+- **Open and resume.** A single directly matched CLI owner uses the ordinary
+  terminal focus adapters. Gateway processes serve multiple sessions and are
+  never focused for a route lease. Resumed CLI leases that use the canonical
+  session ID can select their terminal. A verified closed session can offer
   `HERMES_HOME=<profile root> hermes --resume <id>`, shell-quoted and in its
   recorded working directory. Default and custom root homes also pass
   `--profile default` to prevent Hermes's remembered active profile from changing

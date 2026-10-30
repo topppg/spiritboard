@@ -11,6 +11,7 @@ import stat
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -63,6 +64,13 @@ COLUMNS = {
         "active",
     },
 }
+OPTIONAL_COLUMNS = {"sessions": {"session_key"}}
+
+
+@dataclass(frozen=True)
+class Ownership:
+    sessions: dict[str, set[int]]
+    complete: bool
 
 
 def home_roots(home: Path) -> list[tuple[str, Path]]:
@@ -92,7 +100,8 @@ def is_root(root: Path) -> bool:
 
 
 def _guard(action: int, table: str | None, column: str | None, *_: str | None) -> int:
-    if action == sqlite3.SQLITE_READ and column not in COLUMNS.get(table, set()):
+    allowed = COLUMNS.get(table, set()) | OPTIONAL_COLUMNS.get(table, set())
+    if action == sqlite3.SQLITE_READ and column not in allowed:
         return sqlite3.SQLITE_DENY
     return sqlite3.SQLITE_OK
 
@@ -330,7 +339,7 @@ def goal(session: Session) -> Goal:
     )
 
 
-def _owners(root: Path) -> dict[str, set[int]] | None:
+def _owners(root: Path) -> Ownership | None:
     folder = database(root).parent
     runtime = folder / "runtime"
     if runtime.is_symlink():
@@ -339,7 +348,7 @@ def _owners(root: Path) -> dict[str, set[int]] | None:
     entries = registry.get("entries") if registry else None
     if not isinstance(entries, list) or len(entries) > 5000:
         return None
-    owners: dict[str, set[int]] = {}
+    verified: list[tuple[str, int, bool]] = []
     for entry in entries:
         if not isinstance(entry, dict) or not native_id(entry.get("session_id")):
             return None
@@ -360,20 +369,49 @@ def _owners(root: Path) -> dict[str, set[int]] | None:
         except (OSError, ValueError, OverflowError):
             return None
         if math.floor(actual) == math.floor(start):
-            owners.setdefault(entry["session_id"], set()).add(pid)
-    return owners
+            verified.append((entry["session_id"], pid, entry.get("surface") == "cli"))
+    owners: dict[str, set[int]] = {}
+    complete = True
+    try:
+        with connect(root) as conn:
+            if not supported(conn):
+                return None
+            routes = "session_key" in {
+                row[1] for row in conn.execute("PRAGMA table_info(sessions)")
+            }
+            for sid, pid, focusable in verified:
+                rows = conn.execute("SELECT id FROM sessions WHERE id = ?", (sid,)).fetchall()
+                if not rows and routes:
+                    rows = conn.execute(
+                        "SELECT id FROM sessions WHERE session_key = ? AND ended_at IS NULL "
+                        "AND coalesce(archived, 0) = 0 LIMIT 2",
+                        (sid,),
+                    ).fetchall()
+                if len(rows) != 1 or not native_id(rows[0][0]):
+                    complete = False
+                    continue
+                native = rows[0][0]
+                pids = owners.setdefault(native, set())
+                # A gateway belongs to several viewers; its terminal ancestry cannot focus one.
+                if focusable and native == sid:
+                    pids.add(pid)
+    except OSError:
+        return None
+    return Ownership(owners, complete)
 
 
 def live_sessions(root: Path) -> frozenset[str] | None:
     owners = _owners(root)
-    return frozenset(owners) if owners is not None else None
+    return frozenset(owners.sessions) if owners is not None and owners.complete else None
 
 
 def session_pid(root: Path, native: str) -> tuple[bool, int | None]:
     owners = _owners(root)
     if owners is None:
         return False, None
-    pids = owners.get(native, set())
+    pids = owners.sessions.get(native, set())
+    if not pids and (native in owners.sessions or not owners.complete):
+        return False, None
     if len(pids) > 1:
         return False, None
     return True, next(iter(pids), None)

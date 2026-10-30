@@ -426,6 +426,140 @@ def test_registry_empty_and_duplicate_live_processes(database: Fixture) -> None:
         assert hermes.session_pid(database.root, ALPHA) == (False, None)
 
 
+def test_unmapped_initial_cli_lease_does_not_mark_canonical_session_closed(
+    database: Fixture,
+) -> None:
+    registry(database, {"entries": [lease("20261030_095900_initial1")]})
+    with patch.object(hermes.processes, "process", return_value=live_process()):
+        assert hermes.live_sessions(database.root) is None
+        assert hermes.session_pid(database.root, ALPHA) == (False, None)
+        run = {**database.scan()[ALPHA], "mode": "observation"}
+        assert focus.resolve(run, [database.profile()]).kind == "unsupported"
+
+
+def test_resumed_cli_lease_matches_canonical_id_despite_prior_end_time(database: Fixture) -> None:
+    database.conn.execute("UPDATE sessions SET ended_at = ? WHERE id = ?", (NOW - 100, ALPHA))
+    database.commit()
+    registry(database, {"entries": [lease()]})
+    with patch.object(hermes.processes, "process", return_value=live_process()):
+        assert hermes.live_sessions(database.root) == frozenset({ALPHA})
+        assert hermes.session_pid(database.root, ALPHA) == (True, 4242)
+
+
+def gateway_route(database: Fixture, sid: str, route: str) -> None:
+    columns = {row[1] for row in database.conn.execute("PRAGMA table_info(sessions)")}
+    if "session_key" not in columns:
+        database.conn.execute("ALTER TABLE sessions ADD COLUMN session_key TEXT")
+    database.conn.execute("UPDATE sessions SET session_key = ? WHERE id = ?", (route, sid))
+    database.commit()
+
+
+def test_gateway_route_maps_to_unique_canonical_session_without_focus(database: Fixture) -> None:
+    route = "agent:main:local:dm:invented1"
+    gateway_route(database, ALPHA, route)
+    registry(database, {"entries": [{**lease(route), "surface": "gateway"}]})
+    with patch.object(hermes.processes, "process", return_value=live_process()):
+        assert hermes.live_sessions(database.root) == frozenset({ALPHA})
+        assert hermes.session_pid(database.root, ALPHA) == (False, None)
+        run = {**database.scan()[ALPHA], "mode": "observation"}
+        assert focus.resolve(run, [database.profile()]).kind == "unsupported"
+
+
+@pytest.mark.parametrize("surface", ["gateway", "gateway:local", "tui", "desktop", "worker", None])
+def test_shared_or_unknown_runtime_is_not_focusable_even_with_canonical_session_id(
+    database: Fixture, surface: str | None
+) -> None:
+    registry(database, {"entries": [{**lease(), "surface": surface}]})
+    with patch.object(hermes.processes, "process", return_value=live_process()):
+        assert hermes.live_sessions(database.root) == frozenset({ALPHA})
+        assert hermes.session_pid(database.root, ALPHA) == (False, None)
+
+
+def test_gateway_route_without_optional_session_key_is_unknown(database: Fixture) -> None:
+    registry(
+        database,
+        {"entries": [{**lease("agent:main:local:dm:invented1"), "surface": "gateway"}]},
+    )
+    with patch.object(hermes.processes, "process", return_value=live_process()):
+        assert hermes.live_sessions(database.root) is None
+        assert hermes.session_pid(database.root, ALPHA) == (False, None)
+
+
+@pytest.mark.parametrize("exclude", ["ended", "archived"])
+def test_gateway_route_uses_only_current_unarchived_session(
+    database: Fixture, exclude: str
+) -> None:
+    route = "agent:main:local:dm:invented1"
+    database.session(
+        BETA, ended=NOW if exclude == "ended" else None, archived=exclude == "archived"
+    )
+    gateway_route(database, ALPHA, route)
+    gateway_route(database, BETA, route)
+    registry(database, {"entries": [{**lease(route), "surface": "gateway"}]})
+    with patch.object(hermes.processes, "process", return_value=live_process()):
+        assert hermes.live_sessions(database.root) == frozenset({ALPHA})
+        assert hermes.session_pid(database.root, ALPHA) == (False, None)
+
+
+def test_ambiguous_gateway_route_does_not_guess_session_ownership(database: Fixture) -> None:
+    route = "agent:main:local:dm:invented1"
+    database.session(BETA)
+    gateway_route(database, ALPHA, route)
+    gateway_route(database, BETA, route)
+    registry(database, {"entries": [{**lease(route), "surface": "gateway"}]})
+    with patch.object(hermes.processes, "process", return_value=live_process()):
+        assert hermes.live_sessions(database.root) is None
+        assert hermes.session_pid(database.root, ALPHA) == (False, None)
+        assert hermes.session_pid(database.root, BETA) == (False, None)
+
+
+def test_unmapped_cli_keeps_profile_unknown_but_preserves_exact_canonical_owner(
+    database: Fixture,
+) -> None:
+    database.session(BETA)
+    gateway_route(database, BETA, "agent:main:local:dm:invented1")
+    registry(
+        database,
+        {
+            "entries": [
+                lease(ALPHA, 4242),
+                lease("20261030_095900_initial1", 4343),
+                {**lease("agent:main:local:dm:invented1", 4444), "surface": "gateway"},
+            ]
+        },
+    )
+    with patch.object(hermes.processes, "process", side_effect=lambda pid: live_process(pid)):
+        assert hermes.live_sessions(database.root) is None
+        assert hermes.session_pid(database.root, ALPHA) == (True, 4242)
+        assert hermes.session_pid(database.root, BETA) == (False, None)
+        assert hermes.session_pid(database.root, CHILD) == (False, None)
+
+
+def test_dead_unmapped_lease_does_not_prevent_closed_evidence(database: Fixture) -> None:
+    registry(database, {"entries": [lease("20261030_095900_initial1")]})
+    with patch.object(hermes.processes, "process", return_value=None):
+        assert hermes.live_sessions(database.root) == frozenset()
+        assert hermes.session_pid(database.root, ALPHA) == (True, None)
+
+
+def test_liveness_requires_readable_supported_database(database: Fixture, tmp_path: Path) -> None:
+    unsupported = Fixture(tmp_path / "unsupported")
+    try:
+        unsupported.conn.execute("DROP TABLE messages")
+        unsupported.commit()
+        registry(unsupported, {"entries": []})
+        assert hermes.live_sessions(unsupported.root) is None
+        assert hermes.session_pid(unsupported.root, ALPHA) == (False, None)
+    finally:
+        unsupported.conn.close()
+    registry(database, {"entries": []})
+    database.conn.close()
+    (database.root / "state.db").unlink()
+    assert hermes.live_sessions(database.root) is None
+    assert hermes.session_pid(database.root, ALPHA) == (False, None)
+    database.conn = sqlite3.connect(database.root / "state.db")
+
+
 @pytest.mark.parametrize(
     "value",
     [

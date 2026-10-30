@@ -95,7 +95,7 @@ for upgrades, removal and publishing.
 | **Codex** (CLI and ChatGPT app) | `~/.codex*`, `~/.codex-switch/profiles/*`, `CODEX_HOME` | the thread locks a codex process holds | its terminal tab, or the ChatGPT window | `codex resume <id>` |
 | **opencode** | `opencode.db`, read-only | an `opencode` process in the session's directory | its terminal | `opencode -s <id>` |
 | **Pi** | `~/.pi/agent/sessions`, `PI_CODING_AGENT_DIR` | a `pi` process in the session's directory | its terminal | `pi --session <file>` |
-| **Hermes** | `~/.hermes/state.db`, named profiles, `HERMES_HOME`, read-only | the runtime's active-session registry + process start time | its terminal | `hermes --resume <id>` |
+| **Hermes** | `~/.hermes/state.db`, named profiles, `HERMES_HOME`, read-only | runtime registry + process start time; unmatched live leases leave ownership unknown | a directly matched CLI terminal | `hermes --resume <id>` when verified closed |
 | **DeepSeek Harness** | `~/.dsh` (zstd-compressed), `DSH_HOME` | the `session.lock` the app holds | the app window | not yet |
 | **Grok Bot** (macOS app) | the app's local cache, `GROK_BOT_HOME` | unknown: its agents run in the cloud | the exact agent in the app | — |
 | **Your own agents** | the Python SDK below | heartbeats | — | — |
@@ -104,8 +104,10 @@ Claude Code, Codex and opencode are checked against real sessions, and Pi agains
 a real Pi 0.73 session (reading, liveness and resume). The Claude desktop marker
 and DeepSeek Harness are built from each app's own code and documentation and
 covered by tests, but have seen little or no real data yet.
-Hermes support follows its upstream SQLite schema and active-session registry,
-tested with synthetic sessions; native question/approval detection is unknown.
+Hermes 0.22.5 reading, liveness and resume were checked with the real CLI and a
+local deterministic model endpoint. Fresh CLI leases can use an ID different
+from the stored session, leaving ownership unknown; native question/approval
+detection is unknown too.
 Grok Bot is read from the app's local cache, whose undocumented format was observed
 on one machine and may change; unrecognized versions are skipped with a warning.
 New harnesses plug in as one module each (see [the source guide](https://github.com/topppg/spiritboard/blob/main/docs/SOURCES.md#adding-a-harness)).
@@ -235,7 +237,8 @@ and rerun `uv run python scripts/benchmark_startup.py --samples 7` from a checko
   `pi` process marks that directory's most recent session open. A session is only
   marked closed when the relevant check can run. Grok Bot agents run in the cloud,
   so their liveness is unknown. A missing or unreadable Hermes registry also
-  leaves ownership unknown and disables its open/resume actions.
+  leaves ownership unknown. An unmatched live Hermes lease blocks resume;
+  gateway routes can establish liveness but cannot select a terminal to focus.
 
 What is read, and the bounds on it, are in the [source guide](https://github.com/topppg/spiritboard/blob/main/docs/SOURCES.md).
 
