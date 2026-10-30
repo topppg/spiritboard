@@ -88,7 +88,7 @@ def test_generic_contract_supports_hosts_independent_of_their_native_adapter(
     from unittest.mock import patch
 
     data = tmp_path / "board"
-    for source in ("claude", "codex", "opencode", "pi", "dsh", "grokbot"):
+    for source in ("claude", "codex", "opencode", "pi", "dsh", "grokbot", "hermes"):
         with patch(
             "sys.stdin",
             io.StringIO(
@@ -113,7 +113,7 @@ def test_generic_contract_supports_hosts_independent_of_their_native_adapter(
             )
     signals = InputSignals(data / "inputs.sqlite3")
     try:
-        assert len(signals.snapshot()) == 6
+        assert len(signals.snapshot()) == 7
         assert all(row.state == "waiting_user" for row in signals.snapshot().values())
     finally:
         signals.close()

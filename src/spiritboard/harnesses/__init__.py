@@ -1,6 +1,6 @@
 """Registered agent harnesses, keyed by source kind; discovery follows this order."""
 
-from . import claude, codex, dsh, grokbot, opencode, pi
+from . import claude, codex, dsh, grokbot, hermes, opencode, pi
 from .harness import Goal, Harness
 
 HARNESSES: dict[str, Harness] = {
@@ -12,6 +12,7 @@ HARNESSES: dict[str, Harness] = {
         pi.HARNESS,
         dsh.HARNESS,
         grokbot.HARNESS,
+        hermes.HARNESS,
     )
 }
 

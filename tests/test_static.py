@@ -133,7 +133,7 @@ const runs = [run('child','root','Child'), run('root',null,'Root'), run('ask','r
   run('done',null,'Finished',{state:'completed',summary:'All good',health:'unknown'}), run('ancient',null,'Ancient',{last_seen:old,health:'stale'}),
   {...run('sdk-run',null,'SDK worker'),mode:'sdk',session_id:'s1',source:'sdk',account:'demo',inferred:false,health:'fresh'}];
 const snapshot = { stream_id:'journal-a', cursor:1, runs, server_time:now, stale_after_seconds:15,
-  profiles:[{id:'codex-work',kind:'codex',label:'work'},{id:'claude-personal',kind:'claude',label:'personal'},{id:'codex-empty',kind:'codex',label:'Empty profile'},{id:'grokbot-mac',kind:'grokbot',label:'Grok Bot'},{id:'dsh-home',kind:'dsh',label:'DeepSeek Harness'}],
+  profiles:[{id:'codex-work',kind:'codex',label:'work'},{id:'claude-personal',kind:'claude',label:'personal'},{id:'codex-empty',kind:'codex',label:'Empty profile'},{id:'grokbot-mac',kind:'grokbot',label:'Grok Bot'},{id:'dsh-home',kind:'dsh',label:'DeepSeek Harness'},{id:'hermes-home',kind:'hermes',label:'Hermes'}],
   source_errors:{unavailable:'Source unavailable'}, ai:{enabled:true,status:'ready',calls:2,actual_cost_usd:.0021,known_cost_usd:.0021,unknown_cost_calls:0,summaries:[]},
   activity:{bucket_seconds:10,buckets:60,end:now,runs:{root:[...new Array(59).fill(0),40],'sdk-run':[...new Array(54).fill(0),1,1,1,1,1,2]}} };
 const pastIso = new Date(Date.parse(now) - 290000).toISOString();
@@ -204,8 +204,9 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  assert.ok(!ids.harnesses.textContent.includes('Empty profile'));
  // Labels that already name the tool are not prefixed with its kind.
  assert.ok([...ids['harness-filter'].children].some(o => o.textContent === 'Grok Bot'));
- assert.ok(![...ids['harness-filter'].children].some(o => /grokbot ·|dsh ·/.test(o.textContent)));
- assert.ok(ids.harnesses.textContent.includes('+ 3 idle, in the harness filter'));
+ assert.ok([...ids['harness-filter'].children].some(o => o.textContent === 'Hermes'));
+ assert.ok(![...ids['harness-filter'].children].some(o => /grokbot ·|dsh ·|hermes ·/i.test(o.textContent)));
+ assert.ok(ids.harnesses.textContent.includes('+ 4 idle, in the harness filter'));
  assert.ok(!ids.harnesses.textContent.includes('noisy'));
  assert.ok(ids.flux.children.some(x => x.className === 'col'));
  // The latest events spray up to 15 dots above each of the last 12 bars.
@@ -805,6 +806,11 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  assert.ok(ids.harnesses.children.some(x => x.tagName === 'button' && x.textContent.includes('DeepSeek Harness')));
  stream.listeners.snapshot({data:JSON.stringify(snapshot)}); await tick();
  assert.ok(!ids.harnesses.children.some(x => x.tagName === 'button' && x.textContent.includes('DeepSeek Harness')));
+ const hermesRun = run('hermes', null, 'Invented Hermes session', {session_id:'hermes-home:observed', source:'hermes', account:'Hermes'});
+ stream.listeners.snapshot({data:JSON.stringify({...snapshot,runs:[...snapshot.runs,hermesRun]})}); await tick();
+ assert.ok(ids.harnesses.children.some(x => x.tagName === 'button' && x.textContent.includes('Hermes')));
+ assert.ok(rows().some(x => x.dataset.runId === 'hermes'));
+ stream.listeners.snapshot({data:JSON.stringify(snapshot)}); await tick();
  const sdkButton = () => ids.harnesses.children.find(x => x.tagName === 'button' && x.dataset.focusKey.includes('sdk'));
  stream.listeners.snapshot({data:JSON.stringify({...snapshot, runs:runs.map(r => r.run_id === 'sdk-run' ? {...r, live:false} : r)})}); await tick();
  assert.ok(sdkButton() && !sdkButton().textContent.includes('idle'));
