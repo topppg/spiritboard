@@ -125,3 +125,36 @@ def test_default_directory_reuses_its_verified_dashboard(
         assert backend.main([]) == 0
     assert capsys.readouterr().out == f"Spiritboard is already running: {url}\n"
     serve.assert_not_called()
+
+
+def test_bundled_receiver_records_events_without_starting_dashboard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import io
+
+    from spiritboard.input_events import InputSignals
+
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "synthetic-session"})))
+    with patch.object(cli, "main", side_effect=AssertionError("must not start a dashboard")):
+        assert (
+            backend.main(
+                [
+                    "input-event",
+                    "--source",
+                    "claude",
+                    "--profile-id",
+                    "synthetic",
+                    "--event",
+                    "resume",
+                    "--data-dir",
+                    str(tmp_path / "board"),
+                ]
+            )
+            == 0
+        )
+    signals = InputSignals(tmp_path / "board" / "inputs.sqlite3")
+    try:
+        assert signals.snapshot()["synthetic:synthetic-session"].state == "working"
+    finally:
+        signals.close()
+    assert capsys.readouterr() == ("", "")
