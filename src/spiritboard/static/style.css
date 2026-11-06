@@ -139,7 +139,6 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 32px; display: flex; fle
 .run-row.done { color: var(--muted); }
 .run-row.context { opacity: .65; }
 .run-row.sub { font-size: 13.5px; }
-.run-row.sub .status { padding-left: calc(var(--depth, 1) * 14px); }
 .run-row.sub .agent { padding-left: calc(var(--depth, 1) * 14px); }
 .run-row.sub .agent-name { font-weight: 400; color: var(--soft); }
 .cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -154,8 +153,6 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 32px; display: flex; fle
 .status.g-failed { color: var(--err); }
 .status.g-running .glyph { color: var(--run); } .status.g-rest .glyph { color: var(--rest); }
 .status.g-quiet, .status.g-idle, .status.g-closed, .status.g-done, .status.g-unknown { color: var(--muted); font-weight: 400; }
-.run-row.sub .status { font-weight: 400; color: var(--muted); }
-.run-row.sub .status.g-needs { color: var(--wait); } .run-row.sub .status.g-failed { color: var(--err); }
 .agent-name { font-weight: 500; }
 .new-badge { flex: none; border-radius: var(--r-sm); padding: 0 5px; background: #fbbf2420; color: var(--wait); font-size: var(--fs-xs); font-weight: 600; }
 .pin-mark { flex: none; font-size: var(--fs-sm); }
@@ -248,8 +245,10 @@ kbd { font-family: var(--mono); font-size: var(--fs-xs); background: #1a1528; bo
   .run-row .doing { grid-area: doing; font-size: 13.5px; }
   .run-row .rate-cell { grid-area: rate; }
   .run-row .seen { grid-area: seen; min-width: 28px; text-align: right; }
+  .run-row.sub { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "agent rate seen" "doing doing doing"; }
+  .run-row.sub .status { display: none; }
   .row-open { display: none; }
-  .run-row.sub .agent { padding-left: 0; }
+  .run-row.sub .agent { padding-left: calc(var(--depth, 1) * 14px); }
   .run-row.sub .doing { padding-left: calc(var(--depth, 1) * 14px); }
   .group-row, .expansion { padding-left: 18px; }
   .rate-cell .bar { display: none; }
