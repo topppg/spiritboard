@@ -134,6 +134,7 @@ function browser(initial, past) {
     set textContent(value) {this._text = String(value); this.children = [];}
     get textContent() {return this._text + this.children.map(c => typeof c === 'string' ? c : c.textContent).join('');}
     append(...items) {this.children.push(...items);}
+    insertBefore(item, reference) {this.children.splice(reference ? this.children.indexOf(reference) : this.children.length, 0, item);}
     replaceChildren(...items) {this.children = items; this._text = ''; this.options = [...items];}
     setAttribute(key, value) {this.attrs[key] = value;}
     getAttribute(key) {return this.attrs[key];}
@@ -353,6 +354,7 @@ class Element {
   set textContent(value) { this._text = String(value); this.children = []; }
   get textContent() { return this._text + this.children.map(c => typeof c === 'string' ? c : c.textContent).join(''); }
   append(...items) { this.children.push(...items); }
+  insertBefore(item, reference) { this.children.splice(reference ? this.children.indexOf(reference) : this.children.length, 0, item); }
   replaceChildren(...items) { this.children = items; this._text = ''; if (this.tagName === 'select') this.options = [...items]; }
   setAttribute(key, value) { this.attrs[key] = value; }
   addEventListener(key, fn) { this.listeners[key] = fn; }
@@ -463,13 +465,16 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  assert.equal(dots.length, 20);
  assert.ok(dots.every(d => parseFloat(d.style.left) >= 80));
  assert.equal(ids['flux-note'].textContent, 'events/min · dots = latest events');
- // An open session asks once, on first point or focus, and then shows ↗ before its name.
+ // An open session asks once, on first point or focus, and then shows ↗ after its name.
  const rowOf = (id) => rows().find(r => r.dataset.runId === id);
  const markOf = (id) => flatten(rowOf(id)).find(x => (x.className || '').startsWith('row-open'));
  const focusAsks = (id) => requests.filter(x => x === `/api/runs/${id}/focus`).length;
  assert.ok(!flatten(ids.runs).some(x => (x.className || '').startsWith('row-open')));
  targets.root = {available:true,kind:'focus',label:'Ghostty'};
  rowOf('root').listeners.pointerenter(); await tick();
+ const agentCell = rowOf('root').children.find(x => x.className === 'cell agent');
+ assert.equal(agentCell.children[0].className, 'agent-name');
+ assert.equal(agentCell.children[1], markOf('root'));
  assert.equal(markOf('root').title, 'Open in Ghostty · o');
  assert.equal(markOf('root').attrs['aria-hidden'], 'true');
  assert.equal(rowOf('root').attrs['aria-keyshortcuts'], 'o');
