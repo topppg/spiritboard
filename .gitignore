@@ -18,3 +18,4 @@ node_modules/
 dist/
 build/
 .DS_Store
+/docs/media/session-actions.gif

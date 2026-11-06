@@ -73,8 +73,8 @@ NODE_PATH="$capture_tools/node_modules" uv run --with pillow==13.0.0 python scri
 ```
 
 This preserves the native-observation scene used for `dashboard.png`, `session-open.png`,
-and `social-preview.png`. It also writes a separate `session-actions.gif` (1280×800,
-10 seconds); it does not overwrite the busy `demo.gif` or `demo.mp4`.
+and `social-preview.png`. It also writes a separate, git-ignored `session-actions.gif`
+(1280×800, 10 seconds); it does not overwrite the busy `demo.gif` or `demo.mp4`.
 
 Profiles, liveness, app targets, projects, requests, and replies are all synthetic. The
 capture-only collector returns harmless app targets with no activation commands so the
