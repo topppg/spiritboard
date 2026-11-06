@@ -147,6 +147,12 @@ New harnesses plug in as one module each (see [the source guide](https://github.
   browser across reloads. On the first visit, turns already waiting form the
   baseline and do not all appear new. A new reply stays actionable until checked,
   even beyond the normal your-turn time window.
+- **Keep an agent close.** Use **Pin to top** in its details to keep it above
+  the normal ordering, with a small pin beside its name; **Unpin** restores its
+  usual position. Pins stay in this browser across reloads and new turns, scoped
+  to this board's journal. Filters still apply. A pinned idle agent stays visible
+  instead of joining the folded idle group. Pinning a subagent keeps it under its
+  parent and brings that family to the top.
 - **What each one is doing.** The session's own title (your `/rename`, the
   Claude desktop app's title, Claude's generated title, the Codex thread name, the
   opencode session title, a Pi `/name`, the Hermes session title, the DeepSeek Harness
@@ -171,8 +177,9 @@ that column, click again to reverse it, and a third time to restore the default
 attention order: new turns and unanswered input requests first, running work next,
 then older your-turn sessions you have checked. Sessions stay in the main list.
 Except for STATUS, sorting orders within groups: busy and needs-you agents
-stay above ones at rest, and those above history. Open idle sessions always stay at the bottom.
-Subagents stay under their parent while sorting.
+stay above ones at rest, and those above history. Unpinned open idle sessions stay at the bottom.
+Pins take priority over default and column ordering within the current view;
+subagents stay under their parent while sorting.
 Drag the edge of the STATUS or AGENT heading to widen it (arrow keys work when the
 edge is focused); the width is remembered and a double-click resets it.
 
