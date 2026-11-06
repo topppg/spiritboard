@@ -11,6 +11,11 @@ from spiritboard.input_install import install
 from spiritboard.sources import SourceProfile
 
 
+@pytest.fixture(autouse=True)
+def private_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("spiritboard.input_runtime.default_data_dir", lambda: tmp_path / "runtime")
+
+
 def test_hook_install_is_idempotent_and_removal_preserves_other_hooks(tmp_path: Path) -> None:
     root = tmp_path / "claude"
     root.mkdir()
@@ -111,6 +116,8 @@ def test_installed_hook_runs_from_an_unrelated_directory_with_shell_characters(
         "tool_use_id": "question-one",
         "tool_input": {"questions": []},
     }
+    if kind == "codex":
+        payload.pop("hook_event_name")
     result = subprocess.run(
         command,
         shell=True,

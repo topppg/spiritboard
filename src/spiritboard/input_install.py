@@ -7,12 +7,11 @@ import os
 import shlex
 import stat
 import subprocess
-import sys
 import tempfile
 import uuid
 from pathlib import Path
 
-from . import input_claude, input_codex, input_extensions
+from . import input_claude, input_codex, input_extensions, input_runtime
 from .harnesses.opencode import database
 from .input_events import InputSignals
 from .sources import SourceProfile
@@ -23,10 +22,16 @@ def hook_command(parts: list[str], *, windows: bool | None = None) -> str:
     windows = os.name == "nt" if windows is None else windows
     if windows:
         # Windows argv quoting cannot escape cmd.exe expansion in hook command strings.
-        if any(character in part for part in parts for character in "%&|<>^!\r\n"):
+        if any(character in part for part in parts for character in "%&|<>^!()\r\n"):
             raise ValueError("Hook paths contain unsupported command-shell characters")
         return subprocess.list2cmdline(parts)
     return shlex.join(parts)
+
+
+def _best_effort(command: str) -> str:
+    if os.name == "nt":
+        return f"{command} >NUL 2>&1 & exit /b 0"
+    return f"{command} >/dev/null 2>&1 || :"
 
 
 def _read(path: Path) -> str | None:
@@ -48,9 +53,14 @@ def _owned(command: object, profile: str) -> bool:
     if not isinstance(command, str):
         return False
     try:
-        words = shlex.split(command)
+        words = shlex.split(command, posix=os.name != "nt")
         index = words.index("--profile-id")
-        return "spiritboard" in words and "input-event" in words and words[index + 1] == profile
+        receiver = "spiritboard" in words or any(
+            word.strip('"').replace("\\", "/").rsplit("/", 1)[-1]
+            in {"spiritboard-input.pyz", "spiritboard-input", "spiritboard-input.exe"}
+            for word in words
+        )
+        return receiver and "input-event" in words and words[index + 1] == profile
     except (ValueError, IndexError):
         return False
 
@@ -121,13 +131,10 @@ def install(
     opencode = [profile for profile in profiles if profile.kind == "opencode"]
     if len(opencode) > 1:
         raise ValueError("Select one OpenCode profile per configuration directory")
+    receiver: list[str] = []
     for profile in profiles:
         root = Path(profile.root).expanduser().resolve()
         command = [
-            sys.executable,
-            "-m",
-            "spiritboard",
-            "input-event",
             "--source",
             profile.kind,
             "--profile-id",
@@ -140,9 +147,17 @@ def install(
             adapter = input_claude if profile.kind == "claude" else input_codex
             path = root / ("settings.json" if profile.kind == "claude" else "hooks.json")
             previous = _read(path)
-            content = _settings(
-                previous, {} if remove else adapter.hooks(hook_command(command)), profile.id
-            )
+            _settings(previous, {}, profile.id)
+            if not remove and not receiver:
+                receiver = input_runtime.prepare()
+            additions = {} if remove else adapter.hooks(hook_command(receiver + command))
+            for groups in additions.values():
+                for group in groups:
+                    hooks = group["hooks"]
+                    if isinstance(hooks, list):
+                        for hook in hooks:
+                            hook["command"] = _best_effort(hook["command"])
+            content = _settings(previous, additions, profile.id)
         elif profile.kind in {"pi", "opencode"}:
             extension = True
             if profile.kind == "pi":
@@ -176,7 +191,9 @@ def install(
             marker = f"// Spiritboard input status: {profile.id}\n"
             if previous is not None and not previous.startswith(marker):
                 raise ValueError("An unrelated extension occupies the Spiritboard filename")
-            content = marker + generate(command)
+            if not remove and not receiver:
+                receiver = input_runtime.prepare()
+            content = marker + generate(receiver + command) if not remove else ""
         else:
             results.append({"profile": profile.id, "status": "native transcript signals"})
             continue
