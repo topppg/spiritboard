@@ -988,7 +988,8 @@
     mark.setAttribute("aria-hidden", "true");
     mark.addEventListener("click", (event) => { event?.stopPropagation?.(); openApp(id); });
     button.dataset.openable = "true"; button.setAttribute("aria-keyshortcuts", "o");
-    paintOpenMark(mark); button.append(mark);
+    const agent = [...button.children].find((cell) => cell.className === "cell agent");
+    paintOpenMark(mark); agent.insertBefore(mark, agent.children[1]);
   }
   // The focused row, else the opened one, raises its window like the row's ↗.
   function openFocused() {
