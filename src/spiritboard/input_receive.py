@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import argparse
+import contextlib
+import io
 import json
 import sqlite3
+import sys
 from pathlib import Path
 from typing import TextIO
 
@@ -11,6 +15,22 @@ from . import input_claude, input_codex, input_extensions
 from .input_events import ACTIONS, InputEvent, InputSignals
 
 MAX_INPUT = 1_048_576
+
+
+def main(argv: list[str]) -> int:
+    """Small standalone entry point, including for copied app backends."""
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        try:
+            parser = argparse.ArgumentParser(prog="spiritboard-input")
+            parser.add_argument("command", choices=("input-event",))
+            parser.add_argument("--source", required=True)
+            parser.add_argument("--profile-id", required=True)
+            parser.add_argument("--event")
+            parser.add_argument("--data-dir", required=True, type=Path)
+            args = parser.parse_args(argv)
+            return receive(args.source, args.profile_id, args.event, args.data_dir, sys.stdin)
+        except (Exception, SystemExit):
+            return 0
 
 
 def receive(
