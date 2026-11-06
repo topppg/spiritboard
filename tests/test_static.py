@@ -64,6 +64,9 @@ class StaticTests(unittest.TestCase):
                 "more",
                 "top-actions",
                 "keys-toggle",
+                "attention",
+                "attention-title",
+                "attention-items",
             }
             <= parser.ids
         )
@@ -93,6 +96,234 @@ class StaticTests(unittest.TestCase):
         self.assertIn(".row-open { display: none; }", narrow)
 
     @unittest.skipUnless(shutil.which("node"), "Node is optional; browser syntax/DOM check skipped")
+    def test_attention_tracks_new_turns_separately_from_checked_waiting_sessions(self):
+        script = r"""
+const fs = require('fs'), vm = require('vm'), assert = require('assert');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const flatten = el => el.children.filter(c => typeof c !== 'string').flatMap(c => [c, ...flatten(c)]);
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const stored = {};
+const now = new Date().toISOString();
+const later = seconds => new Date(Date.parse(now) + seconds * 1000).toISOString();
+const run = (id, state, extra = {}) => ({run_id:id, parent_run_id:null, name:id, mode:'observation',
+  session_id:'synthetic:observed', source:'codex', account:'synthetic', state, live:true,
+  health:'observed', inferred:true, task:'Synthetic task', activity:'Synthetic reply',
+  last_seen:now, started_at:now, operations:[], ...extra});
+const snapshot = runs => ({stream_id:'attention-test', cursor:1, server_time:now, runs,
+  profiles:[], source_errors:{}, ai:{enabled:false}, stale_after_seconds:15,
+  activity:{bucket_seconds:10, buckets:60, end:now, runs:{busy:new Array(60).fill(1)}}});
+function browser(initial, past) {
+  let document, stream;
+  class Element {
+    constructor(tag) {
+      this.tagName = tag; this.children = []; this.dataset = {}; this.listeners = {}; this.attrs = {};
+      this.value = ''; this.hidden = false; this._text = ''; this.options = [];
+      this.style = {setProperty(k,v) {this[k] = v;}, removeProperty(k) {delete this[k];}};
+      this.classList = {toggle:(name, force) => {
+        const classes = new Set((this.className || '').split(' ').filter(Boolean));
+        const enabled = force ?? !classes.has(name);
+        if (enabled) classes.add(name); else classes.delete(name);
+        this.className = [...classes].join(' ');
+      }};
+    }
+    set textContent(value) {this._text = String(value); this.children = [];}
+    get textContent() {return this._text + this.children.map(c => typeof c === 'string' ? c : c.textContent).join('');}
+    append(...items) {this.children.push(...items);}
+    replaceChildren(...items) {this.children = items; this._text = ''; this.options = [...items];}
+    setAttribute(key, value) {this.attrs[key] = value;}
+    getAttribute(key) {return this.attrs[key];}
+    addEventListener(key, fn) {this.listeners[key] = fn;}
+    focus() {document.activeElement = this;}
+    blur() {}
+    scrollIntoView() {}
+    querySelectorAll(selector) {
+      const key = (selector.match(/^\[data-([a-z-]+)\]$/) || [])[1];
+      const prop = key ? key.replace(/-([a-z])/g, (_, c) => c.toUpperCase()) : 'focusKey';
+      return flatten(this).filter(el => el.dataset[prop] !== undefined);
+    }
+  }
+  const ids = {};
+  const element = id => ids[id] ||= new Element(id.endsWith('filter') ? 'select' : 'div');
+  ['attention','attention-title','attention-items','attention-toggle'].forEach(element);
+  ['active','waiting','all'].forEach(view => {
+    const button = new Element('button'); button.dataset.view = view; element('views').append(button);
+  });
+  element('window-filter').value = '604800000';
+  const listeners = {};
+  document = {getElementById:element, createElement:tag => new Element(tag), querySelectorAll:() => [],
+    activeElement:null, addEventListener:(key, fn) => {listeners[key] = fn;}};
+  class Option extends Element {constructor(text,value) {super('option'); this.textContent = text; this.value = value;}}
+  class EventSource {constructor() {stream = this; this.listeners = {};} addEventListener(key, fn) {this.listeners[key] = fn;}}
+  const requests = [], posts = [];
+  let focusStatus = 200, focusHold = null;
+  const context = {document, Option, EventSource, console, setInterval:() => {}, setTimeout:() => {},
+    localStorage:{getItem:key => stored[key] ?? null, setItem:(key,value) => {stored[key] = value;}},
+    fetch:async (url, options = {}) => {
+      requests.push(url);
+      if (options.method === 'POST') {
+        posts.push({url, headers:options.headers});
+        if (focusHold) await focusHold;
+        return {ok:focusStatus === 200, status:focusStatus};
+      }
+      const data = url.startsWith('/api/snapshot?at=') ? past : url.endsWith('/focus') ? {available:true, kind:'focus', label:'Synthetic terminal'} :
+        url.startsWith('/api/runs/') ? {events:[], next_cursor:0, has_more:false} : initial;
+      return {ok:true, json:async () => data};
+    }};
+  vm.runInNewContext(source, context);
+  return {ids, requests, posts, focusResult:status => {focusStatus = status;}, holdFocus:promise => {focusHold = promise;},
+    send:(runs, extra = {}) => stream.listeners.snapshot({data:JSON.stringify({...snapshot(runs), ...extra})}),
+    escape:() => listeners.keydown({key:'Escape', target:{tagName:'BODY'}, preventDefault(){}})};
+}
+const rows = board => board.ids.runs.children.filter(el => el.dataset.runId);
+const row = (board, id) => rows(board).find(el => el.dataset.runId === id);
+const cards = board => flatten(board.ids['attention-items']).filter(el => el.dataset.attentionId);
+const card = (board, id) => cards(board).find(el => el.dataset.attentionId === id);
+const isNew = el => el && flatten(el).some(child => (child.className || '').split(' ').includes('new-badge'));
+const group = board => flatten(board.ids.runs).find(el => el.dataset.group === 'already-waiting');
+const openAttention = async (board, id) => {
+  const button = flatten(card(board, id)).find(el => el.dataset.focusKey === `attention-${id}`);
+  assert.ok(button, `attention entry for ${id} offers an inspect button`);
+  button.listeners.click(); await tick();
+};
+(async () => {
+  const idle = run('longstanding', 'idle');
+  const busy = run('busy', 'working');
+  const reading = run('reading', 'working');
+  const approval = run('approval', 'waiting_user');
+  let current = [idle, busy, reading, approval];
+  let board = browser(snapshot(current)); await tick();
+  assert.ok(!card(board, 'longstanding'), 'existing idle windows establish a quiet baseline');
+  assert.ok(card(board, 'approval'), 'unresolved questions stay prominent at startup');
+  assert.ok(!isNew(card(board, 'approval')), 'startup questions are pending, not newly finished');
+  assert.ok(group(board), 'checked and pre-existing turns share an already waiting group');
+  assert.equal(group(board).attrs['aria-expanded'], 'false');
+  assert.ok(!row(board, 'longstanding'), 'already waiting starts collapsed');
+  group(board).listeners.click(); await tick();
+  assert.ok(row(board, 'longstanding'));
+  group(board).listeners.click(); await tick();
+  row(board, 'reading').listeners.click(); await tick();
+  const frozen = rows(board).map(el => el.dataset.runId);
+  const finished = {...busy, state:'idle', last_seen:later(1)};
+  current = [idle, finished, reading, approval]; board.send(current); await tick();
+  assert.deepEqual(rows(board).map(el => el.dataset.runId), frozen, 'reading keeps table rows still');
+  assert.ok(isNew(card(board, 'busy')), 'new replies surface independently of frozen table order');
+  assert.ok(board.ids['attention-title'].textContent.includes('1 new'));
+  board.ids.search.value = 'reading'; board.ids.search.listeners.input(); await tick();
+  assert.ok(isNew(card(board, 'busy')), 'table filters never bury new attention');
+  board.ids.search.value = ''; board.ids.search.listeners.input(); await tick();
+  await openAttention(board, 'busy');
+  assert.ok(!card(board, 'busy'), 'opening the reply acknowledges its new marker');
+  assert.ok(row(board, 'busy').textContent.includes('your turn'), 'viewing never puts a turn at rest');
+  assert.ok(!row(board, 'busy').textContent.includes('at rest'));
+  board.escape(); await tick();
+  assert.ok(!row(board, 'busy'), 'checked replies move into the collapsed waiting group');
+  await openAttention(board, 'approval');
+  assert.ok(card(board, 'approval'), 'viewing an unresolved question keeps it in the queue');
+  assert.ok(!isNew(card(board, 'approval')));
+  board.send([idle, finished, reading, {...approval, last_seen:later(1)}]); await tick();
+  assert.ok(!isNew(card(board, 'approval')), 'a heartbeat never rearms an unchanged question');
+  board.escape(); await tick();
+  board = browser(snapshot(current)); await tick();
+  assert.ok(!card(board, 'busy'), 'acknowledged replies stay checked after reload');
+  const resumed = {...busy, last_seen:later(2)};
+  board.send([idle, resumed, reading, approval]); await tick();
+  assert.ok(!card(board, 'busy'), 'running sessions leave the attention queue');
+  const finishedAgain = {...finished, last_seen:later(3)};
+  current = [idle, finishedAgain, reading, approval]; board.send(current); await tick();
+  assert.ok(isNew(card(board, 'busy')), 'the next finished turn rearms attention');
+  board = browser(snapshot(current)); await tick();
+  assert.ok(isNew(card(board, 'busy')), 'an unviewed reply survives reload');
+  const historical = {...snapshot([run('busy', 'waiting_user', {last_seen:later(-290)})]), at:later(-290), server_time:later(-290)};
+  board = browser(snapshot(current), historical); await tick();
+  const beforeHistory = JSON.stringify(stored);
+  board.ids.flux.children.filter(el => el.className === 'col')[30].listeners.click(); await tick();
+  row(board, 'busy').listeners.click(); await tick();
+  assert.equal(JSON.stringify(stored), beforeHistory, 'viewing history never changes checked turns');
+  flatten(board.ids['past-bar']).find(el => el.tagName === 'button').listeners.click(); await tick();
+  assert.ok(isNew(card(board, 'busy')), 'returning live preserves pending new replies');
+  const parent = run('parent', 'working');
+  const worker = run('worker', 'working', {parent_run_id:'parent'});
+  board = browser(snapshot([parent, worker])); await tick();
+  board.send([{...parent, state:'idle', last_seen:later(1)}, worker]); await tick();
+  assert.ok(!card(board, 'parent'), 'an idle parent with a running child still counts as working');
+  board.send([{...parent, state:'idle', last_seen:later(1)}, {...worker, health:'stale'}]); await tick();
+  assert.ok(!card(board, 'parent'), 'loss of a running child signal never announces an old parent reply');
+  board.send([{...parent, state:'idle', last_seen:later(1)}, {...worker, state:'idle'}]); await tick();
+  assert.ok(isNew(card(board, 'parent')), 'an actual child turn end releases its parent for attention');
+  const selected = run('selected', 'working');
+  board = browser(snapshot([selected])); await tick();
+  row(board, 'selected').listeners.click(); await tick();
+  const selectedReply = {...selected, state:'idle', last_seen:later(1)};
+  board.send([selectedReply]); await tick();
+  assert.ok(isNew(card(board, 'selected')), 'a new turn in the open panel still needs acknowledgment');
+  board.send([selectedReply], {server_time:later(13 * 3600)}); await tick();
+  assert.ok(isNew(card(board, 'selected')), 'unread turns stay prominent after twelve hours');
+  assert.ok(row(board, 'selected').textContent.includes('your turn'));
+  assert.ok(board.ids.counts.textContent.includes('1 needs you'));
+  await openAttention(board, 'selected');
+  assert.ok(!card(board, 'selected'));
+  assert.ok(board.ids.counts.textContent.includes('1 idle'), 'checking an aged turn refreshes header counts');
+  assert.ok(!board.ids.counts.textContent.includes('needs you'));
+  const sdkQuestion = run('sdk-question', 'waiting_user', {mode:'sdk', inferred:false, health:'fresh'});
+  board = browser(snapshot([sdkQuestion])); await tick();
+  await openAttention(board, 'sdk-question');
+  board.send([{...sdkQuestion, last_seen:later(1)}]); await tick();
+  assert.ok(card(board, 'sdk-question'), 'SDK questions remain unresolved after viewing');
+  assert.ok(!isNew(card(board, 'sdk-question')), 'SDK heartbeat timestamps never create a new question');
+  board.send([{...sdkQuestion, activity:'A different synthetic question', last_seen:later(2)}]); await tick();
+  assert.ok(isNew(card(board, 'sdk-question')), 'a new SDK question rearms attention');
+  board = browser(snapshot([busy]), historical); await tick();
+  board.ids.flux.children.filter(el => el.className === 'col')[30].listeners.click(); await tick();
+  board.send([finishedAgain]); await tick();
+  row(board, 'busy').listeners.click(); await tick();
+  assert.equal(board.ids.attention.hidden, true, 'past view keeps live attention out of historical rows');
+  flatten(board.ids['past-bar']).find(el => el.tagName === 'button').listeners.click(); await tick();
+  assert.ok(isNew(card(board, 'busy')), 'turns arriving during history remain unread on return');
+  board = browser(snapshot([busy])); await tick();
+  board.send([finished]); await tick();
+  row(board, 'busy').listeners.pointerenter(); await tick();
+  const openMark = () => flatten(row(board, 'busy')).find(el => el.dataset.openRun === 'busy');
+  assert.ok(openMark(), 'a native session offers a direct app open control');
+  board.focusResult(409);
+  openMark().listeners.click({stopPropagation(){}}); await tick();
+  assert.ok(isNew(card(board, 'busy')), 'a failed app open leaves the reply unread');
+  assert.equal(row(board, 'busy').attrs['aria-expanded'], 'false');
+  board.focusResult(200);
+  openMark().listeners.click({stopPropagation(){}}); await tick();
+  assert.ok(!card(board, 'busy'), 'successful app opening acknowledges the finished reply');
+  assert.deepEqual(board.posts, [
+    {url:'/api/runs/busy/focus', headers:{'X-Spiritboard':'focus'}},
+    {url:'/api/runs/busy/focus', headers:{'X-Spiritboard':'focus'}}
+  ]);
+  board = browser(snapshot([busy])); await tick();
+  board.send([finished]); await tick();
+  row(board, 'busy').listeners.pointerenter(); await tick();
+  let releaseFocus;
+  board.holdFocus(new Promise(resolve => {releaseFocus = resolve;}));
+  openMark().listeners.click({stopPropagation(){}}); await tick();
+  board.send([{...busy, last_seen:later(2)}]); await tick();
+  board.send([finishedAgain]); await tick();
+  releaseFocus(); await tick();
+  assert.ok(isNew(card(board, 'busy')), 'a slow app open never acknowledges a later finished turn');
+  const nativeWorking = run('native-handoff', 'working', {state_observed_at:now, last_seen:later(-30)});
+  board = browser(snapshot([nativeWorking])); await tick();
+  const nativeReply = {...nativeWorking, state:'idle', state_observed_at:later(1)};
+  board.send([nativeReply]); await tick();
+  assert.ok(isNew(card(board, 'native-handoff')));
+  await openAttention(board, 'native-handoff');
+  board.send([{...nativeReply, state_observed_at:undefined, last_seen:later(2)}]); await tick();
+  assert.ok(!card(board, 'native-handoff'), 'transcript catch-up never rearms the native turn already checked');
+})().catch(error => {console.error(error); process.exitCode = 1;});
+"""
+        result = subprocess.run(
+            [shutil.which("node"), "-e", script, str(STATIC / "app.js")],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(shutil.which("node"), "Node is optional; browser syntax/DOM check skipped")
     def test_browser_renders_table_harnesses_and_private_text_safely(self):
         script = r"""
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
@@ -112,7 +343,7 @@ class Element {
   querySelectorAll(selector) { const key = (selector.match(/^\[data-([a-z-]+)\]$/) || [])[1]; const prop = key ? key.replace(/-([a-z])/g, (_, c) => c.toUpperCase()) : 'focusKey'; return flatten(this).filter(x => x.dataset[prop] !== undefined); }
 }
 function flatten(el) { return el.children.filter(c => typeof c !== 'string').flatMap(c => [c, ...flatten(c)]); }
-const ids = Object.fromEntries(['connection','refresh','demo-banner','error','source-errors','counts','ai-status','harnesses','flux','overview','views','harness-filter','window-filter','window-label','search','hidden-note','runs','past-bar','zoom','flux-window','flux-note','axis','more','top-actions','keys-toggle','keys','summary-settings-open'].map(id => [id, new Element(id.endsWith('filter') ? 'select' : 'div')]));
+const ids = Object.fromEntries(['connection','refresh','demo-banner','error','source-errors','counts','ai-status','harnesses','flux','overview','views','harness-filter','window-filter','window-label','search','hidden-note','runs','past-bar','zoom','flux-window','flux-note','axis','more','top-actions','keys-toggle','keys','summary-settings-open','attention','attention-title','attention-items','attention-toggle'].map(id => [id, new Element(id.endsWith('filter') ? 'select' : 'div')]));
 const headers = Object.fromEntries(['status','agent','doing','rate','seen'].map(key => { const button = new Element('button'); button.dataset.sort = key; button.textContent = key; return [key, button]; }));
 ids['window-filter'].value = '604800000';
 ['active','waiting','all'].forEach(v => { const b = new Element('button'); b.dataset.view = v; ids.views.children.push(b); });
@@ -858,6 +1089,8 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  assert.ok(rowOf('worker'));
  delegation([delegator, {...worker, state:'idle'}]);
  assert.equal(rowOf('worker'), undefined);
+ // Its checked parent now belongs to the collapsed already waiting group.
+ flatten(ids.runs).find(x => x.dataset.group === 'already-waiting').listeners.click(); await tick();
  rowOf('delegator').listeners.click(); await tick();
  control('rest').listeners.click(); await tick();
  assert.equal(statusText('delegator'), '☾ at rest');
