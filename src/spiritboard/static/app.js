@@ -614,15 +614,9 @@
       visited.add(run.run_id);
       state.order.push(run.run_id);
       const all = children.get(run.run_id) || [];
-      const inView = all.filter((c) => visible.has(c.run_id));
-      // A finished turn, idle or quiet session folds settled subagents unless it is only context for them.
-      const status = statusOf(run);
-      const settled = (status.turn || ["idle", "quiet", "rest"].includes(status.key)) && inView.every((c) => rank(c).rank >= 3 && !rank(c).pinned)
-        && direct.has(run.run_id);
-      // Your choice wins: true folds them all, false shows them all, even ones outside this view.
-      const choice = state.folds.get(run.run_id);
-      const folded = (choice ?? settled) && !openPath.has(run.run_id);
-      const kids = (folded ? [] : choice === false ? all : inView).sort(compare);
+      // Only the subagent-count control (or its shortcut) opens a child list.
+      const folded = state.folds.get(run.run_id) ?? true;
+      const kids = (folded ? [] : all).sort(compare);
       kids.forEach((c) => { if (!visible.has(c.run_id)) { visible.add(c.run_id); revealed.add(c.run_id); } });
       host.append(row(run, depth, !direct.has(run.run_id) && !revealed.has(run.run_id), orphan, maxRate, all.length, kids.length));
       if (state.selected === run.run_id) host.append(expansion(run, byId));
@@ -664,12 +658,15 @@
     button.type = "button"; button.dataset.focusKey = `select:${run.run_id}`; button.dataset.runId = run.run_id;
     button.setAttribute("aria-current", String(open));
     button.setAttribute("aria-expanded", String(open));
-    const statusCell = node("span", null, `cell status g-${status.key}`);
-    statusCell.append(node("span", status.glyph, "glyph"), ` ${status.text}`);
-    if (status.child) statusCell.title = "A subagent is running";
-    else if (status.key === "needs" && run.input_status?.pending > 0) statusCell.title = "Pending input reported by the harness";
-    else if (status.key === "quiet") statusCell.title = "No recent activity signal; a question or approval may be pending";
-    else if (run.inferred) statusCell.title = "Inferred from the transcript";
+    const statusCell = node("span", null, `cell status${run.parent_run_id ? "" : ` g-${status.key}`}`);
+    if (run.parent_run_id) statusCell.setAttribute("aria-hidden", "true");
+    else {
+      statusCell.append(node("span", status.glyph, "glyph"), ` ${status.text}`);
+      if (status.child) statusCell.title = "A subagent is running";
+      else if (status.key === "needs" && run.input_status?.pending > 0) statusCell.title = "Pending input reported by the harness";
+      else if (status.key === "quiet") statusCell.title = "No recent activity signal; a question or approval may be pending";
+      else if (run.inferred) statusCell.title = "Inferred from the transcript";
+    }
     const agent = node("span", null, "cell agent");
     const harness = harnessOf(run);
     // The harness lives in tooltips, the accessible name and the opened panel; rows carry status colour only.
@@ -726,9 +723,9 @@
     return button;
   }
   function toggleFold(id, fold) {
-    // With its panel open, the toggle closes the panel and the list together.
-    if (state.selected === id) { selectRun(null); return; }
-    state.folds.set(id, fold); renderTable();
+    state.folds.set(id, fold);
+    if (fold && state.selected && state.selected !== id && within(state.selected, id)) { selectRun(null); return; }
+    renderTable();
   }
   // The focused row, else the opened one, folds or unfolds its subagents.
   function foldSelected() {
@@ -901,12 +898,14 @@
     main.append(head, meta);
     // One status line under the title: what state it is in and where to act.
     const line = (cls, glyph, text, where) => { const p = node("p", null, `state-line ${cls}`); p.append(node("span", glyph, "glyph"), ` ${text}`); if (where) p.append(node("span", ` · ${where}`, "where")); main.append(p); };
-    if (status.key === "rest") line("g-rest", "☾", "At rest · you checked this turn", "back when the agent acts again");
-    else if (status.turn) line("g-needs", "◐", `Your turn · finished ${ago(observedAt(run))}`);
-    else if (run.archived) line("g-closed", "■", `Archived in ${run.app || "its app"} · last active ${ago(observedAt(run))}`);
-    else if (status.key === "closed") line("g-closed", "■", `Closed ${ago(observedAt(run))}`, "no running process owns this session");
-    else if (status.key === "needs") line("g-needs", "◐", `Needs you · ${run.input_status ? "reported" : "asked"} ${ago(run.input_status?.observed_at || observedAt(run))}`, parent ? `answer in “${nameOf(parent)}”` : "");
-    else if (status.key !== "running") line(`g-${status.key}`, status.glyph, status.text[0].toUpperCase() + status.text.slice(1));
+    if (!run.parent_run_id) {
+      if (status.key === "rest") line("g-rest", "☾", "At rest · you checked this turn", "back when the agent acts again");
+      else if (status.turn) line("g-needs", "◐", `Your turn · finished ${ago(observedAt(run))}`);
+      else if (run.archived) line("g-closed", "■", `Archived in ${run.app || "its app"} · last active ${ago(observedAt(run))}`);
+      else if (status.key === "closed") line("g-closed", "■", `Closed ${ago(observedAt(run))}`, "no running process owns this session");
+      else if (status.key === "needs") line("g-needs", "◐", `Needs you · ${run.input_status ? "reported" : "asked"} ${ago(run.input_status?.observed_at || observedAt(run))}`);
+      else if (status.key !== "running") line(`g-${status.key}`, status.glyph, status.text[0].toUpperCase() + status.text.slice(1));
+    }
     // A subagent's goal is the task its parent gave it, unless a summary exists.
     const goal = run.ai_summary?.text || (run.parent_run_id ? run.task : "");
     if (goal) {
@@ -1082,17 +1081,13 @@
     const run = state.selected && state.snapshot.runs.find((r) => r.run_id === state.selected);
     if (run && statusOf(run).turn && !state.past) toggleRest(run);
   }
-  // Opening a session lists all its subagents; closing it folds back to the default (only busy or
-  // needs-you subagents), unless you moved into one of them.
+  // Tree membership keeps navigation and an explicit ancestor collapse consistent.
   function within(id, ancestor) {
     const byId = new Map(state.snapshot.runs.map((r) => [r.run_id, r]));
     for (let r = byId.get(id), seen = 0; r && seen < 64; r = byId.get(r.parent_run_id), seen++) if (r.run_id === ancestor) return true;
     return false;
   }
   async function selectRun(id) {
-    const previous = state.selected;
-    if (previous && previous !== id && !(id && within(id, previous))) state.folds.delete(previous);
-    if (id && id !== previous) state.folds.set(id, false);
     state.selected = id; state.events = []; state.nextCursor = 0; state.more = false; state.historyOpen = false;
     state.target = null; state.targetNote = ""; state.targetFallback = false;
     checkAttention(state.snapshot?.runs.find((run) => run.run_id === id));

@@ -100,6 +100,11 @@ const inspect = async (board, id) => {
   }
   row(board, id).listeners.click(); await tick();
 };
+const toggleChildren = async (board, id) => {
+  const control = flatten(row(board, id)).find(el => el.className === 'fold');
+  assert.ok(control, `session ${id} offers its subagent count`);
+  control.listeners.click({stopPropagation(){}}); await tick();
+};
 """
 
 
@@ -192,6 +197,116 @@ class StaticTests(unittest.TestCase):
         self.assertIn(".run-row:hover .row-open, .run-row:focus-visible .row-open", css)
         narrow = re.search(r"@container \(max-width: 880px\) \{\n(.*?)\n\}", css, re.S).group(1)
         self.assertIn(".row-open { display: none; }", narrow)
+
+    @unittest.skipUnless(shutil.which("node"), "Node is optional; browser syntax/DOM check skipped")
+    def test_subagents_only_expand_by_their_count_and_never_show_a_status(self):
+        script = (
+            BROWSER_HARNESS
+            + r"""
+const order = board => rows(board).map(el => el.dataset.runId);
+const detail = board => flatten(board.ids.runs).find(el => el.id === 'detail');
+const statusCell = (board, id) => flatten(row(board, id)).find(el => (el.className || '').startsWith('cell status'));
+const assertNoChildStatus = (board, id) => {
+  const cell = statusCell(board, id);
+  assert.equal(cell.textContent, '', 'subagent status cells have no status label or glyph');
+  assert.equal(cell.attrs['aria-hidden'], 'true');
+  assert.ok(!cell.title && !cell.attrs['aria-label'], 'subagents expose no status tooltip or accessible label');
+};
+(async () => {
+  const parent = run('parent', 'working', {name:'Parent'});
+  const child = run('child', 'unknown', {parent_run_id:'parent', name:'Child'});
+  const grandchild = run('grandchild', 'working', {parent_run_id:'child', name:'Nested worker'});
+  let current = [parent, child, grandchild];
+  let board = browser(snapshot(current)); await tick();
+  assert.deepEqual(order(board), ['parent'], 'running descendants start folded');
+  await inspect(board, 'parent');
+  assert.deepEqual(order(board), ['parent'], 'opening parent details never expands its children');
+  await toggleChildren(board, 'parent');
+  assert.deepEqual(order(board), ['parent','child'], 'the count opens only its own child list');
+  assert.ok(detail(board) && row(board, 'parent').attrs['aria-expanded'] === 'true', 'toggling children keeps parent details open');
+  assertNoChildStatus(board, 'child');
+  await inspect(board, 'child');
+  assert.ok(!flatten(detail(board)).some(el => (el.className || '').startsWith('state-line')));
+  assert.deepEqual(order(board), ['parent','child'], 'opening child details leaves its nested list folded');
+  await toggleChildren(board, 'child');
+  assert.deepEqual(order(board), ['parent','child','grandchild']);
+  assert.equal(row(board, 'child').attrs['aria-expanded'], 'true');
+  assertNoChildStatus(board, 'grandchild');
+  await inspect(board, 'grandchild');
+  await toggleChildren(board, 'parent');
+  assert.deepEqual(order(board), ['parent'], 'folding an ancestor hides its whole subtree');
+  assert.equal(detail(board), undefined, 'folding away the selected descendant closes its hidden detail');
+  await toggleChildren(board, 'parent');
+  assert.deepEqual(order(board), ['parent','child','grandchild'], 'an explicit nested expansion survives folding its ancestor');
+  await inspect(board, 'parent'); board.escape(); await tick();
+  assert.deepEqual(order(board), ['parent','child','grandchild'], 'opening and closing details preserves explicit child-list choices');
+  await toggleChildren(board, 'child');
+  assert.deepEqual(order(board), ['parent','child']);
+  for (const state of ['working','waiting_user','idle','completed','failed','unknown']) {
+    current = [parent, {...child, state, last_seen:later(1)}, grandchild];
+    board.send(current); await tick();
+    assert.deepEqual(order(board), ['parent','child'], 'live status changes preserve explicit folds');
+    assertNoChildStatus(board, 'child');
+    await inspect(board, 'child');
+    assert.ok(!flatten(detail(board)).some(el => (el.className || '').startsWith('state-line')),
+      `a ${state} subagent has no detail status line`);
+    board.escape(); await tick();
+  }
+  board = browser(snapshot([parent, child])); await tick();
+  assert.deepEqual(order(board), ['parent'], 'a reload starts with child lists folded again');
+  board.send([parent, child, run('new-worker', 'working', {parent_run_id:'parent'})]); await tick();
+  assert.deepEqual(order(board), ['parent'], 'a newly running child never opens a folded list');
+  board.send([parent, {...child, state:'waiting_user'}]); await tick();
+  assert.deepEqual(order(board), ['parent'], 'a newly pending child never opens a folded list');
+  assert.ok(board.ids.counts.textContent.includes('1 needs you'), 'hidden child statuses still contribute to counts');
+  await toggleChildren(board, 'parent');
+  await inspect(board, 'child');
+  const pin = flatten(detail(board)).find(el => el.dataset.focusKey === 'pin');
+  pin.listeners.click(); await tick();
+  const ordinary = run('ordinary', 'waiting_user');
+  board = browser(snapshot([ordinary, parent, child])); await tick();
+  assert.deepEqual(order(board), ['parent','ordinary'], 'a pinned child promotes its family without automatically expanding it');
+  await toggleChildren(board, 'parent');
+  assert.ok(flatten(row(board, 'child')).some(el => el.className === 'pin-mark'));
+  board = browser(snapshot([parent, child, grandchild])); await tick();
+  board.ids.search.value = 'Nested worker'; board.ids.search.listeners.input(); await tick();
+  assert.deepEqual(order(board), ['parent'], 'search keeps matching descendants folded until requested');
+  await inspect(board, 'parent');
+  assert.deepEqual(order(board), ['parent']);
+  await toggleChildren(board, 'parent');
+  assert.deepEqual(order(board), ['parent','child']);
+  await toggleChildren(board, 'child');
+  assert.deepEqual(order(board), ['parent','child','grandchild']);
+  const idleParent = {...parent, state:'idle'};
+  board = browser(snapshot([idleParent, {...child, state:'working'}])); await tick();
+  assert.equal(statusCell(board, 'parent').textContent, '● running', 'hidden worker status still propagates to the parent');
+  assert.deepEqual(order(board), ['parent']);
+  const live = {...snapshot([parent, child]), activity:{...snapshot([]).activity, runs:{parent:new Array(60).fill(1)}}};
+  const past = {...live, at:later(-290), server_time:later(-290)};
+  board = browser(live, past); await tick();
+  board.ids.flux.children.filter(el => el.className === 'col')[30].listeners.click(); await tick();
+  assert.deepEqual(order(board), ['parent'], 'historical child lists also start folded');
+  await inspect(board, 'parent');
+  assert.deepEqual(order(board), ['parent']);
+  await toggleChildren(board, 'parent');
+  await inspect(board, 'child');
+  assertNoChildStatus(board, 'child');
+  assert.ok(!flatten(detail(board)).some(el => (el.className || '').startsWith('state-line')));
+  const orphan = run('orphan', 'unknown', {parent_run_id:'absent'});
+  board = browser(snapshot([orphan])); await tick();
+  assertNoChildStatus(board, 'orphan');
+  await inspect(board, 'orphan');
+  assert.ok(!flatten(detail(board)).some(el => (el.className || '').startsWith('state-line')));
+})().catch(error => {console.error(error); process.exitCode = 1;});
+"""
+        )
+        result = subprocess.run(
+            [shutil.which("node"), "-e", script, str(STATIC / "app.js")],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     @unittest.skipUnless(shutil.which("node"), "Node is optional; browser syntax/DOM check skipped")
     def test_new_flags_track_turns_in_existing_rows_without_changing_the_board_layout(self):
@@ -337,6 +452,7 @@ class StaticTests(unittest.TestCase):
   const contextParent = run('context-parent', 'working');
   const inputChild = run('input-child', 'working', {parent_run_id:'context-parent'});
   board = browser(snapshot([newerChecked, contextParent, inputChild, reading])); await tick();
+  await toggleChildren(board, 'context-parent');
   board.send([newerChecked, contextParent, {...inputChild, state:'waiting_user', last_seen:later(1)}, reading]); await tick();
   assert.deepEqual(rows(board).map(el => el.dataset.runId), ['context-parent','input-child','reading','checked-later'],
     'a newly pending child raises its whole subtree ahead of ordinary work');
@@ -460,7 +576,8 @@ const idleGroup = board => flatten(board.ids.runs).find(el => el.className === '
   const child = run('child', 'working', {parent_run_id:'parent'});
   let current = [ordinary, parent, child];
   let board = browser(snapshot(current)); await tick();
-  assert.deepEqual(order(board), ['ordinary','parent','child']);
+  assert.deepEqual(order(board), ['ordinary','parent']);
+  await toggleChildren(board, 'parent');
   await inspect(board, 'child'); await togglePin(board);
   assert.deepEqual(order(board), ['parent','child','ordinary'], 'pinning a child raises its intact parent tree');
   assert.ok(pinned(board, 'child') && !pinned(board, 'parent'), 'only the explicitly pinned child has a marker');
@@ -471,19 +588,24 @@ const idleGroup = board => flatten(board.ids.runs).find(el => el.className === '
   assert.deepEqual(order(board), ['ordinary'], 'pinning does not expose trees excluded by filters');
   board.ids.search.value = ''; board.ids.search.listeners.input(); await tick();
   board = browser(snapshot(current)); await tick();
-  assert.deepEqual(order(board), ['parent','child','ordinary'], 'a pinned child retains its tree after reload');
+  assert.deepEqual(order(board), ['parent','ordinary'], 'a pinned child promotes its folded tree after reload');
+  await toggleChildren(board, 'parent');
+  assert.deepEqual(order(board), ['parent','child','ordinary']);
   const settled = [ordinary, {...parent, state:'idle', last_seen:later(-13 * 3600)},
     {...child, state:'idle', last_seen:later(-13 * 3600)}];
   board.send(settled); await tick();
   board = browser(snapshot(settled)); await tick();
-  assert.deepEqual(order(board), ['parent','child','ordinary'], 'a settled pinned child remains visible in its parent tree after reload');
+  assert.deepEqual(order(board), ['parent','ordinary'], 'a settled pinned child keeps its family high without opening it');
+  await toggleChildren(board, 'parent');
+  assert.deepEqual(order(board), ['parent','child','ordinary']);
   assert.ok(pinned(board, 'child') && !pinned(board, 'parent'));
   const liveForHistory = {...snapshot(current), activity:{...snapshot(current).activity, runs:{parent:new Array(60).fill(1)}}};
   const historical = {...liveForHistory, at:later(-290), server_time:later(-290)};
   board = browser(liveForHistory, historical); await tick();
   const beforeHistory = JSON.stringify(stored);
   board.ids.flux.children.filter(el => el.className === 'col')[30].listeners.click(); await tick();
-  assert.deepEqual(order(board), ['ordinary','parent','child'], 'pins do not reorder historical snapshots');
+  assert.deepEqual(order(board), ['ordinary','parent'], 'pins do not reorder historical snapshots');
+  await toggleChildren(board, 'parent');
   assert.ok(!pinned(board, 'child'), 'history hides live pin markers');
   await inspect(board, 'child');
   assert.equal(pinAction(board), undefined, 'history cannot edit live pins');
@@ -602,7 +724,10 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
 (async()=>{
  await tick();
  assert.equal(ids['demo-banner'].hidden,false);
- // Active view: finished and long-quiet runs are hidden; needs-you sorts first.
+ // Active view: child lists start folded; their statuses still rank their parent first.
+ assert.deepEqual(rows().map(r => r.dataset.runId), ['root','orphan','sdk-run']);
+ const foldOf = (id) => flatten(rows().find(r => r.dataset.runId === id)).find(x => x.className === 'fold');
+ foldOf('root').listeners.click(); await tick();
  assert.deepEqual(rows().map(r => r.dataset.runId), ['root','ask','child','orphan','sdk-run']);
  assert.equal(ids['hidden-note'].textContent, '2 finished or older · show all');
  // The note opens everything it hides; elsewhere it only counts.
@@ -622,8 +747,10 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  assert.ok(ids.runs.textContent.includes('parent not yet available'));
  assert.equal(rows().find(r => r.dataset.runId === 'child').style['--depth'], '1');
  const asker = rows().find(r => r.dataset.runId === 'ask');
- assert.ok(asker.textContent.includes('needs you') && !asker.textContent.includes('~'));
- assert.equal(flatten(asker).find(x => (x.className || '').includes('status')).title, 'Inferred from the transcript');
+ const askerStatus = flatten(asker).find(x => (x.className || '').includes('status'));
+ assert.equal(askerStatus.textContent, '');
+ assert.equal(askerStatus.attrs['aria-hidden'], 'true');
+ assert.equal(askerStatus.title, undefined);
  assert.ok(asker.textContent.includes('Retry tuning'));
  assert.ok(asker.textContent.includes('Tuning retry limits') && !asker.textContent.includes('✦'));
  assert.ok(flatten(asker).some(x => (x.className || '').includes('doing needs')));
@@ -783,7 +910,7 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  ids['harness-filter'].value = ''; ids['harness-filter'].listeners.change();
  // Views.
  ids.views.children[1].listeners.click();
- assert.deepEqual(rows().map(r => r.dataset.runId), ['root','ask']);
+ assert.deepEqual(rows().map(r => r.dataset.runId), ['root','ask','child']);
  assert.ok(rows()[0].className.includes('context'));
  ids.views.children[2].listeners.click();
  assert.equal(ids['window-label'].hidden, false);
@@ -792,9 +919,12 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  assert.equal(rows().length, 7);
  ids['window-filter'].value = '604800000';
  ids.views.children[0].listeners.click();
- // Search keeps ancestors as context.
+ // Search keeps ancestors as context without opening their folded child list.
+ foldOf('root').listeners.click(); await tick();
  ids.search.value = 'child'; ids.search.listeners.input();
- assert.deepEqual(rows().map(r => r.dataset.runId), ['root','child']);
+ assert.deepEqual(rows().map(r => r.dataset.runId), ['root']);
+ foldOf('root').listeners.click(); await tick();
+ assert.deepEqual(rows().map(r => r.dataset.runId), ['root','ask','child']);
  ids.search.value = ''; ids.search.listeners.input();
  // Re-render keeps focus on the same row.
  rows()[1].focus();
@@ -843,8 +973,8 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  assert.ok(detail().textContent.includes('Original task'));
  assert.ok(!detail().textContent.includes('you asked'));
  rows().find(r => r.dataset.runId === 'ask').listeners.click(); await tick();
- assert.ok(detail().textContent.includes('Needs you · asked just now'));
- assert.ok(detail().textContent.includes('answer in “Root”'));
+ assert.ok(!flatten(detail()).some(x => (x.className || '').startsWith('state-line')));
+ assert.ok(!detail().textContent.includes('Needs you · asked just now'));
  assert.ok(detail().textContent.includes('Tuning retry limits'));
  // A stopped session offers a resume command to copy, never to run.
  assert.equal(control('open-app'), undefined);
@@ -982,10 +1112,11 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  assert.ok(rows()[pendingAt].textContent.includes('open · idle'));
  docListeners.keydown({key:'Escape', target:{tagName:'BODY'}, preventDefault(){}}); await tick();
  assert.equal(group().textContent, '▸ 2 open · idle');
- // An open idle session whose subagent needs you stays in the list instead of folding away.
+ // An open idle session whose subagent needs you stays in the list; its children remain folded.
  const asking = run('asking', 'open', 'Asking', {state:'waiting_user'});
  stream.listeners.snapshot({data:JSON.stringify({...snapshot, runs:[...snapshot.runs, gone, open, helper, asking, pending]})}); await tick();
- assert.ok(rows().some(r => r.dataset.runId === 'asking'));
+ assert.ok(rows().some(r => r.dataset.runId === 'open'));
+ assert.equal(rows().find(r => r.dataset.runId === 'asking'), undefined);
  assert.equal(group(), undefined);
  stream.listeners.snapshot({data:JSON.stringify({...snapshot, runs:[...snapshot.runs, gone, open, helper, pending]})}); await tick();
  group().listeners.click(); await tick();
@@ -993,24 +1124,26 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  const openRow = rows().find(r => r.dataset.runId === 'open');
  assert.ok(openRow.textContent.includes('open · idle') && openRow.textContent.includes('1 subagent'));
  assert.equal(rows().find(r => r.dataset.runId === 'helper'), undefined);
- // Opening the session lists its subagents and closing it folds them again.
- const foldOf = (id) => flatten(rows().find(r => r.dataset.runId === id)).find(x => x.className === 'fold');
+ // Opening and closing details leaves child-list choices unchanged.
  openRow.listeners.click(); await tick();
  assert.ok(detail());
+ assert.equal(rows().find(r => r.dataset.runId === 'helper'), undefined);
+ foldOf('open').listeners.click(); await tick();
+ assert.ok(detail() && expanded() === 'open');
  assert.ok(rows().some(r => r.dataset.runId === 'helper'));
- // Moving into a subagent keeps the parent's list open.
  rows().find(r => r.dataset.runId === 'helper').listeners.click(); await tick();
  assert.ok(rows().some(r => r.dataset.runId === 'helper'));
  rows().find(r => r.dataset.runId === 'open').listeners.click(); await tick();
  rows().find(r => r.dataset.runId === 'open').listeners.click(); await tick();
  assert.equal(detail(), undefined);
- assert.equal(rows().find(r => r.dataset.runId === 'helper'), undefined);
- // With the panel open, the toggle closes the panel and the list together.
+ assert.ok(rows().some(r => r.dataset.runId === 'helper'));
+ // Folding children keeps the parent's detail panel open.
  rows().find(r => r.dataset.runId === 'open').listeners.click(); await tick();
  foldOf('open').listeners.click(); await tick();
- assert.equal(detail(), undefined);
+ assert.ok(detail() && expanded() === 'open');
  assert.equal(rows().find(r => r.dataset.runId === 'helper'), undefined);
- // With the panel closed, the toggle and the s key fold the list without opening it.
+ docListeners.keydown({key:'Escape', target:{tagName:'BODY'}, preventDefault(){}}); await tick();
+ // With the panel closed, the toggle and the s key change children without opening details.
  assert.equal(foldOf('open').textContent, '▸ 1 subagent');
  foldOf('open').listeners.click(); await tick();
  assert.equal(detail(), undefined);
@@ -1032,12 +1165,14 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  const capNote = ids.runs.children.findIndex(x => x.className === 'empty' && x.textContent.startsWith('Showing the first 300'));
  assert.ok(capNote > -1 && capNote < ids.runs.children.indexOf(group()));
  assert.ok(rows().some(r => r.dataset.runId === 'open'));
- // A parent shown only as context never folds away the subagent that matched.
+ // A parent shown as context still requires its count to reveal a matching subagent.
  const longAgo = new Date(Date.now() - 13 * 3600000).toISOString();
  const elder = run('elder', null, 'Elder', {state:'idle', health:'stale', last_seen:longAgo});
  const kid = run('kid', 'elder', 'Kid', {state:'idle'});
  stream.listeners.snapshot({data:JSON.stringify({...snapshot, runs:[...snapshot.runs, gone, open, helper, elder, kid]})}); await tick();
  assert.ok(rows().find(r => r.dataset.runId === 'elder').textContent.includes('context'));
+ assert.equal(rows().find(r => r.dataset.runId === 'kid'), undefined);
+ foldOf('elder').listeners.click(); await tick();
  assert.ok(rows().some(r => r.dataset.runId === 'kid'));
  // The toggle counts subagents outside the view too; showing all reveals them without a context tag.
  const lone = run('lone', null, 'Lone', {health:'fresh'});
@@ -1186,7 +1321,7 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  const renamedRuns = runs.map(r => r.run_id === 'root' ? {...r, local_name:'Release train'} : r);
  stream.listeners.snapshot({data:JSON.stringify({...snapshot, runs:renamedRuns})}); await tick();
  ids.search.value = 'release train'; ids.search.listeners.input();
- // Root is open, so its subagents are listed under it too.
+ // The explicitly opened root child list stays open through renaming and search.
  assert.deepEqual(rows().map(r => r.dataset.runId), ['root','ask','child']);
  ids.search.value = ''; ids.search.listeners.input();
  // The heading says it was renamed here; Escape cancels an edit without saving.
@@ -1269,7 +1404,7 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  // When the worker settles or disappears, the main agent's own turn/rest status returns.
  delegation([delegator, {...worker, state:'idle'}]);
  assert.equal(statusText('delegator'), '◐ your turn');
- // Returning to your turn folds settled subagents without opening the detail panel.
+ // Unopened child lists stay folded when a worker settles.
  assert.equal(rowOf('worker'), undefined);
  assert.equal(detail(), undefined);
  const delegationFold = () => flatten(rowOf('delegator')).find(x => x.className === 'fold');
@@ -1282,15 +1417,15 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  assert.equal(delegationFold().textContent, '▾ 1 subagent');
  delegationFold().listeners.click(); await tick();
  assert.equal(rowOf('worker'), undefined);
- // Opening then closing the parent restores the collapsed default.
- rowOf('delegator').listeners.click(); await tick();
- assert.ok(rowOf('worker'));
+ // Opening then closing parent details keeps the existing folded choice.
  rowOf('delegator').listeners.click(); await tick();
  assert.equal(rowOf('worker'), undefined);
- // A subagent asking for input remains visible under a parent whose turn ended.
+ rowOf('delegator').listeners.click(); await tick();
+ assert.equal(rowOf('worker'), undefined);
+ // A subagent asking for input never expands its parent's list.
  delegation([delegator, {...worker, state:'waiting_user'}]);
  assert.equal(statusText('delegator'), '◐ your turn');
- assert.ok(rowOf('worker'));
+ assert.equal(rowOf('worker'), undefined);
  delegation([delegator, {...worker, state:'idle'}]);
  assert.equal(rowOf('worker'), undefined);
  rowOf('delegator').listeners.click(); await tick();
@@ -1308,7 +1443,10 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  const grandchild = {...worker, parent_run_id:'middle', state:'waiting_tool'};
  delegation([grandchild, middle, ancestor]);
  assert.equal(statusText('delegator'), '● running');
- assert.equal(statusText('middle'), '● running');
+ assert.equal(rowOf('middle'), undefined);
+ delegationFold().listeners.click(); await tick();
+ assert.equal(statusText('middle'), '');
+ assert.equal(flatten(rowOf('middle')).find(x => (x.className || '').startsWith('cell status')).attrs['aria-hidden'], 'true');
  assert.equal(group(), undefined);
  assert.ok(ids.counts.textContent.includes('3 running'));
  delegation([ancestor, middle, {...grandchild, state:'waiting_child'}]);

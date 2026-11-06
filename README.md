@@ -125,15 +125,16 @@ New harnesses plug in as one module each (see [the source guide](https://github.
   with dots for the latest events. The harness list shows the harnesses with
   something running or drawn in the chart; idle ones stay available in the
   harness filter.
-- **Where to put your attention.** Every session has one status:
+- **Where to put your attention.** Main agents show one status; subagent rows and
+  details leave it out:
 
   | Status | Meaning |
   | --- | --- |
   | ◐ **needs you** | An unanswered question or approval was reported. It stays actionable until resolved. |
-  | ◐ **your turn** | Finished its turn and is waiting for your next direction: for 12 hours while the session is still open, otherwise for 30 minutes. Settled subagents stay folded by default; opening the session or expanding its subagent list shows them. |
+  | ◐ **your turn** | Finished its turn and is waiting for your next direction: for 12 hours while the session is still open, otherwise for 30 minutes. |
   | ☾ **at rest** | A turn you checked with **let it rest** (or `r`) in its detail view; nothing needed now. It goes back to your turn as soon as the agent does anything. Kept in this browser only. |
   | ● **running** | Working, including while it waits on a tool or a subagent. A running descendant also keeps its main agent running, even if the main agent's own transcript is idle or quiet. Explicit approvals, finished runs and closed sessions keep their own status. |
-  | ◌ **open · idle** | Still open in a terminal or app, idle for longer. It stays in the active view however long it idles, dimmed, grouped under one folded **▸ N open · idle** line at the bottom of the list (unless one of its subagents is running or needs you), with its subagents folded. Opening a session lists all its subagents and closing it folds them again, keeping only ones that are running or need you; **▸ N subagents** (or `s`) folds or unfolds them without opening the session, and closes both when its panel is open. Its summary and title are not refreshed while it idles. |
+  | ◌ **open · idle** | Still open in a terminal or app, idle for longer. It stays in the active view however long it idles, dimmed, grouped under one folded **▸ N open · idle** line at the bottom of the list (unless one of its subagents is running or needs you). Its summary and title are not refreshed while it idles. |
   | ? **status unknown** | No recent activity evidence. The agent may be working or waiting for an unrecorded reply. |
   | ■ **closed** | No running process owns the session any more. |
   | ✓ **done** | An SDK run reported that it finished. |
@@ -152,7 +153,7 @@ New harnesses plug in as one module each (see [the source guide](https://github.
   usual position. Pins stay in this browser across reloads and new turns, scoped
   to this board's journal. Filters still apply. A pinned idle agent stays visible
   instead of joining the folded idle group. Pinning a subagent keeps it under its
-  parent and brings that family to the top.
+  parent and brings that family to the top without opening its subagent list.
 - **What each one is doing.** The session's own title (your `/rename`, the
   Claude desktop app's title, Claude's generated title, the Codex thread name, the
   opencode session title, a Pi `/name`, the Hermes session title, the DeepSeek Harness
@@ -160,7 +161,12 @@ New harnesses plug in as one module each (see [the source guide](https://github.
   moves on, its goal, your latest request and
   the agent's latest reply or commentary. Open a session and click its name to rename it in Spiritboard
   only; clear it to go back to the automatic title. Subagents sit under their parent,
-  named by the task the parent gave them. Sessions the Claude desktop app runs
+  named by the task the parent gave them. Each subagent list starts collapsed,
+  including running agents and search results. Click **▸ N subagents** (or `s`)
+  to open or close that list; nested lists have their own toggles. Your choice
+  lasts until you toggle it again or reload. Opening or closing agent details
+  leaves the lists as you chose them. Collapsing a list keeps its parent's details
+  open and closes any hidden subagent's details. Sessions the Claude desktop app runs
   are tagged **Claude desktop**; ones archived there never count as active.
 - **Jump in.** Open a session in the terminal or app that runs it (cmux, tmux,
   iTerm2, Terminal, VS Code, the ChatGPT, Claude or DeepSeek Harness app), or copy a
