@@ -59,7 +59,41 @@ In Codex, review the generated hooks with **`/hooks`** before trusting them;
 installation alone does not bypass Codex's trust gate. Restart or reload agent
 extensions where required. Existing open questions are not replayed by installing
 hooks. The running Spiritboard version must include this receiver, and the
-Python environment used by the generated command must remain installed.
+running dashboard must use the same data directory as the installed hooks.
+
+### Runtime and upgrades
+
+Installation saves a private receiver snapshot in `input-runtime` under Spiritboard's
+normal user-data directory, even when `--data-dir` selects another folder. Python
+installs use the underlying Python installation with isolated startup and a
+standard-library-only archive. The receiver does not depend on the installing
+checkout, its `.venv`, an editable package, or the `uvx` cache. Bundled Mac builds
+save a standalone copy of their backend instead. Events work while the dashboard
+is stopped; they never install dependencies or contact a service.
+
+After upgrading Spiritboard, run the same `inputs install` command again. This
+also migrates older hooks that point into a checkout's `.venv`, with private backups
+and without replacing unrelated hooks. For example, if the board uses the normal
+user-data directory:
+
+```sh
+spiritboard inputs install --source claude --source codex
+```
+
+Include the board's `--data-dir` and `--config` when it uses custom settings.
+Reinstalling hooks does not move dashboard history. For a setup that survives
+removing a development checkout, keep dashboard data in the normal user-data
+directory or another permanent folder too. A Mac app remembering a custom data
+folder reconnects only to a server already running for that folder; use
+**File › Use Default Data Folder** for the app's own server.
+
+Removing the base Python installation, the receiver snapshot, or access to the
+data directory stops event delivery. Native hooks still exit quietly and
+successfully, so optional status reporting cannot interrupt an agent session.
+Rerun `inputs install` from a working installation to restore delivery.
+`inputs remove` works without the receiver and removes only Spiritboard's entries.
+Snapshots remain in `input-runtime` because other profiles may still use them;
+after removing all Spiritboard hooks/extensions, that directory can be deleted.
 
 ## Source coverage
 
