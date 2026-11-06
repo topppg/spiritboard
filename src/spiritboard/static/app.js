@@ -14,9 +14,11 @@
   const OPEN_RETRY = 15000;
   const MAX_ROWS = 300;
   const REST_KEY = "spiritboard.rested";
+  const ATTENTION_KEY = "spiritboard.attention";
   const WIDTH_KEY = "spiritboard.columns";
   const KIND_NAMES = { codex: "Codex", claude: "Claude", opencode: "opencode", pi: "Pi", hermes: "Hermes", dsh: "DeepSeek Harness", grokbot: "Grok Bot" };
   const state = { snapshot: null, selected: null, view: "active", sort: null, descending: false, order: [], frozen: new Map(), split: 0, colors: new Map(), events: [], nextCursor: 0, more: false, eventBusy: false, request: 0, fetching: false, live: false, lastSnapshotAt: 0, fingerprint: null, historyOpen: false, tableKey: "", target: null, targetNote: "", targetFallback: false, latest: null, past: null, pastRequest: 0, zoom: 600, chart: null, chartAt: 0, rested: loadRested(), editing: null, draft: "", folds: new Map(), openTargets: new Map(), openFlashes: new Map() };
+  state.attention = loadAttention();
   // Chart windows in seconds: heading, then the left and middle axis labels.
   const ZOOMS = { 600: ["last 10 minutes", "-10m", "-5m"], 3600: ["last hour", "-1h", "-30m"], 86400: ["last 24 hours", "-24h", "-12h"],
     604800: ["last 7 days", "-7d", "-3.5d"], 2592000: ["last 30 days", "-30d", "-15d"] };
@@ -79,11 +81,64 @@
     return "Transcript only · unrecorded questions or approvals may be missed";
   }
   const observedAt = (run) => run.state_observed_at || run.last_seen;
-  function healthOf(run) {
+  function loadAttention() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(ATTENTION_KEY));
+      if (saved && typeof saved.entries === "object" && saved.entries !== null) return saved;
+    } catch (_) { /* attention works without browser storage */ }
+    return null;
+  }
+  function saveAttention() {
+    try { localStorage.setItem(ATTENTION_KEY, JSON.stringify(state.attention)); } catch (_) { /* attention works without browser storage */ }
+  }
+  function turnToken(run) {
+    // SDK heartbeats change last_seen without creating a new question or reply.
+    let content = 2166136261;
+    for (const character of JSON.stringify([run.activity, run.task, run.started_at])) content = Math.imul(content ^ character.charCodeAt(0), 16777619) >>> 0;
+    return JSON.stringify([run.state, run.state_observed_at || run.input_status?.observed_at ||
+      (run.inferred && run.state === "idle" ? observedAt(run) : content.toString(16))]);
+  }
+  function isNew(run) {
+    const entry = state.attention?.entries[run.run_id];
+    return Boolean(entry && entry.kind === run.state && entry.token === turnToken(run) && !entry.checked);
+  }
+  function reconcileAttention(snapshot) {
+    const previous = state.attention?.stream === snapshot.stream_id ? state.attention : null;
+    const current = statusesFor(snapshot.runs, liveNow(), false);
+    const byId = new Map(snapshot.runs.map((run) => [run.run_id, run]));
+    const uncertain = new Set();
+    // Losing a child's signal cannot announce that its parent's work finished.
+    for (const run of snapshot.runs.filter((r) => ["quiet", "unknown"].includes(current.get(r.run_id).key) && !["idle", "waiting_user"].includes(r.state))) {
+      const seen = new Set([run.run_id]);
+      for (let parent = byId.get(run.parent_run_id); parent && !seen.has(parent.run_id); parent = byId.get(parent.parent_run_id)) {
+        seen.add(parent.run_id); uncertain.add(parent.run_id);
+      }
+    }
+    const entries = Object.create(null);
+    for (const run of snapshot.runs) {
+      const status = current.get(run.run_id);
+      const kind = status.key === "running" || (run.state === "idle" && uncertain.has(run.run_id)) ? "working" : run.state;
+      const token = turnToken(run);
+      const signal = Boolean(run.state_observed_at || run.input_status?.observed_at);
+      const before = previous?.entries[run.run_id];
+      const actionable = status.key === "needs" && kind !== "working";
+      // A transcript catching up replaces the hook's timestamp for the same turn.
+      const same = before?.kind === kind && (before.token === token || (before.signal && !signal));
+      entries[run.run_id] = { token, kind, signal, checked: same ? before.checked : !previous || !actionable };
+    }
+    const next = { stream: snapshot.stream_id, entries };
+    if (JSON.stringify(next) !== JSON.stringify(state.attention)) { state.attention = next; saveAttention(); }
+  }
+  function checkAttention(run) {
+    if (state.past || !run || !isNew(run)) return;
+    state.attention.entries[run.run_id].checked = true;
+    saveAttention();
+  }
+  function healthOf(run, now = serverNow()) {
     const health = typeof run.health === "object" ? run.health?.state : run.health;
     if (health === "observed" || terminal.has(run.state)) return health || "unknown";
     const last = time(observedAt(run));
-    if (health === "fresh" && last !== null && serverNow() - last > (state.snapshot?.stale_after_seconds || 30) * 1000) return "stale";
+    if (health === "fresh" && last !== null && now - last > (state.snapshot?.stale_after_seconds || 30) * 1000) return "stale";
     return health || "unknown";
   }
   // A rest mark holds the latest turn observation, so later activity clears it.
@@ -91,6 +146,7 @@
     try { return new Map(Object.entries(JSON.parse(localStorage.getItem(REST_KEY)) || {})); } catch (_) { return new Map(); }
   }
   function toggleRest(run) {
+    checkAttention(run);
     if (state.rested.get(run.run_id) === observedAt(run)) state.rested.delete(run.run_id); else state.rested.set(run.run_id, observedAt(run));
     const current = new Map(state.latest.runs.map((r) => [r.run_id, observedAt(r)]));
     [...state.rested].filter(([id, seen]) => current.get(id) !== seen).forEach(([id]) => state.rested.delete(id));
@@ -99,7 +155,7 @@
   }
   let statuses = new Map();
   function statusOf(run) { return statuses.get(run.run_id) || ownStatusOf(run); }
-  function ownStatusOf(run) {
+  function ownStatusOf(run, now = serverNow(), past = Boolean(state.past)) {
     if (run.state === "completed") return { key: "done", glyph: "✓", text: "done" };
     if (run.state === "failed") return { key: "failed", glyph: "✗", text: "failed" };
     if (run.state === "cancelled") return { key: "done", glyph: "–", text: "cancelled" };
@@ -109,12 +165,12 @@
     // An unanswered approval stops a transcript from changing; it still needs you.
     if (run.state === "waiting_user") return { key: "needs", glyph: "◐", text: "needs you" };
     // A top-level session that recently finished its turn is waiting for your next direction.
-    if (run.state === "idle" && !run.parent_run_id && serverNow() - (time(observedAt(run)) || 0) <= (run.live === true ? OPEN_TURN_WINDOW : QUIET_WINDOW)) {
-      if (!state.past && state.rested.get(run.run_id) === observedAt(run)) return { key: "rest", turn: true, glyph: "☾", text: "at rest" };
+    if (run.state === "idle" && !run.parent_run_id && ((!past && isNew(run)) || now - (time(observedAt(run)) || 0) <= (run.live === true ? OPEN_TURN_WINDOW : QUIET_WINDOW))) {
+      if (!past && state.rested.get(run.run_id) === observedAt(run)) return { key: "rest", turn: true, glyph: "☾", text: "at rest" };
       return { key: "needs", turn: true, glyph: "◐", text: "your turn" };
     }
     if (run.state === "idle" && run.live === true && !run.parent_run_id) return { key: "idle", glyph: "◌", text: "open · idle" };
-    if (!["fresh", "observed"].includes(healthOf(run))) return { key: "quiet", glyph: "?", text: "status unknown" };
+    if (!["fresh", "observed"].includes(healthOf(run, now))) return { key: "quiet", glyph: "?", text: "status unknown" };
     // Waiting on a tool or a child is ordinary work, not something for you.
     if (String(run.state).startsWith("waiting")) return { key: "running", glyph: "●", text: "running" };
     if (run.state === "idle") return { key: "idle", glyph: "◌", text: "idle" };
@@ -122,22 +178,25 @@
     return { key: "running", glyph: "●", text: "running" };
   }
   function updateStatuses() {
-    const runs = state.snapshot.runs;
+    statuses = statusesFor(state.snapshot.runs);
+  }
+  function statusesFor(runs, now = serverNow(), past = Boolean(state.past)) {
     const byId = new Map(runs.map((run) => [run.run_id, run]));
-    statuses = new Map(runs.map((run) => [run.run_id, ownStatusOf(run)]));
-    const running = runs.filter((run) => statuses.get(run.run_id).key === "running");
+    const result = new Map(runs.map((run) => [run.run_id, ownStatusOf(run, now, past)]));
+    const running = runs.filter((run) => result.get(run.run_id).key === "running");
     // Use the full displayed tree, so filters and folded children cannot hide ongoing work.
     for (const run of running) {
       const seen = new Set([run.run_id]);
       for (let parent = byId.get(run.parent_run_id); parent && !seen.has(parent.run_id); parent = byId.get(parent.parent_run_id)) {
         seen.add(parent.run_id);
-        const status = statuses.get(parent.run_id);
+        const status = result.get(parent.run_id);
         if (status.key === "running") break;
         if (!["done", "failed", "closed"].includes(status.key) && (status.key !== "needs" || status.turn)) {
-          statuses.set(parent.run_id, { key: "running", glyph: "●", text: "running", child: true });
+          result.set(parent.run_id, { key: "running", glyph: "●", text: "running", child: true });
         }
       }
     }
+    return result;
   }
   function doingOf(run, status) {
     if (terminal.has(run.state)) return { text: run.summary || run.activity || run.task || "finished", cls: "" };
@@ -206,6 +265,7 @@
     if (!snapshot || !Array.isArray(snapshot.runs)) throw new Error("Invalid dashboard snapshot.");
     state.latest = snapshot;
     state.lastSnapshotAt = Date.now();
+    reconcileAttention(snapshot);
     if (state.zoom !== 600 && Date.now() - state.chartAt > 10000) loadChart();
     // The past board stays still; only the chart follows live updates.
     if (state.past) { render(); return; }
@@ -448,7 +508,9 @@
   }
 
   function workRank(run) {
-    const key = statusOf(run).key;
+    const status = statusOf(run);
+    const key = status.key;
+    if (!state.past && key === "needs" && status.turn && !isNew(run)) return 2;
     return { needs: 0, running: 1, waiting: 2, rest: 3, idle: 3, unknown: 4, quiet: 5, failed: 6, done: 7 }[key] ?? 8;
   }
   function sortValue(run) {
@@ -468,7 +530,7 @@
   function tableKey() {
     return JSON.stringify([state.fingerprint, activity().end && Math.floor(time(activity().end) / 10000), state.view,
       $("harness-filter").value, $("window-filter").value, $("search").value, state.sort, state.descending, state.selected, state.historyOpen,
-      state.events.length, state.eventBusy, state.more, state.target, state.targetNote, state.targetFallback, [...state.rested], Math.floor(serverNow() / 60000)]);
+      state.events.length, state.eventBusy, state.more, state.target, state.targetNote, state.targetFallback, [...state.rested], state.attention, Math.floor(serverNow() / 60000)]);
   }
   function seenText(value) {
     const seen = time(value);
@@ -593,6 +655,7 @@
     const name = node("span", nameOf(run), "agent-name");
     name.title = titleNote(run) ? `${where} · ${titleNote(run)}` : where;
     agent.append(name, node("span", where, "sr-only"));
+    if (!state.past && status.key === "needs" && isNew(run)) agent.append(node("span", "new", "new-badge"));
     if (run.local_name) {
       const mark = node("span", "✎", "renamed-mark"); mark.title = "Renamed by you in Spiritboard";
       mark.setAttribute("role", "img"); mark.setAttribute("aria-label", "renamed by you");
@@ -881,11 +944,13 @@
   }
   async function openApp(id) {
     if (state.past) return;
+    const opened = state.snapshot.runs.find((run) => run.run_id === id);
     let ok = false;
     try { ok = (await fetch(`/api/runs/${encodeURIComponent(id)}/focus`, { method: "POST", cache: "no-store", headers: { "X-Spiritboard": "focus" } })).ok; } catch (_) { ok = false; }
     // Each row keeps its own result in state, so live redraws and other rows' opens leave it alone.
     const flash = { ok };
     state.openFlashes.set(id, flash); paintOpenMarks(id);
+    if (ok) { checkAttention(opened); render(); }
     setTimeout(() => {
       if (state.openFlashes.get(id) !== flash) return;
       state.openFlashes.delete(id);
@@ -996,6 +1061,8 @@
     if (id && id !== previous) state.folds.set(id, false);
     state.selected = id; state.events = []; state.nextCursor = 0; state.more = false; state.historyOpen = false;
     state.target = null; state.targetNote = ""; state.targetFallback = false;
+    checkAttention(state.snapshot?.runs.find((run) => run.run_id === id));
+    if (state.snapshot) { updateStatuses(); renderCounts(); }
     renderDetail();
     if (id) { loadTarget(id); await loadEvents(true); }
   }

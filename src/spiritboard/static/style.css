@@ -157,6 +157,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 32px; display: flex; fle
 .run-row.sub .status { font-weight: 400; color: var(--muted); }
 .run-row.sub .status.g-needs { color: var(--wait); } .run-row.sub .status.g-failed { color: var(--err); }
 .agent-name { font-weight: 500; }
+.new-badge { flex: none; border-radius: var(--r-sm); padding: 0 5px; background: #fbbf2420; color: var(--wait); font-size: var(--fs-xs); font-weight: 600; }
 .cell.agent { display: flex; align-items: center; gap: 8px; }
 .agent .note, .agent .fold { flex: none; }
 .cell.agent > .agent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

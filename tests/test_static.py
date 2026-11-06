@@ -67,6 +67,14 @@ class StaticTests(unittest.TestCase):
             }
             <= parser.ids
         )
+        self.assertTrue(
+            parser.ids.isdisjoint(
+                {"attention", "attention-title", "attention-items", "attention-toggle"}
+            )
+        )
+        css = (STATIC / "style.css").read_text()
+        self.assertNotIn(".attention-card", css)
+        self.assertNotIn(".waiting-group-row", css)
         script = (STATIC / "app.js").read_text()
         for forbidden in (
             "innerHTML",
@@ -91,6 +99,247 @@ class StaticTests(unittest.TestCase):
         self.assertIn(".run-row:hover .row-open, .run-row:focus-visible .row-open", css)
         narrow = re.search(r"@container \(max-width: 880px\) \{\n(.*?)\n\}", css, re.S).group(1)
         self.assertIn(".row-open { display: none; }", narrow)
+
+    @unittest.skipUnless(shutil.which("node"), "Node is optional; browser syntax/DOM check skipped")
+    def test_new_flags_track_turns_in_existing_rows_without_changing_the_board_layout(self):
+        script = r"""
+const fs = require('fs'), vm = require('vm'), assert = require('assert');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const flatten = el => el.children.filter(c => typeof c !== 'string').flatMap(c => [c, ...flatten(c)]);
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const stored = {};
+const now = new Date().toISOString();
+const later = seconds => new Date(Date.parse(now) + seconds * 1000).toISOString();
+const run = (id, state, extra = {}) => ({run_id:id, parent_run_id:null, name:id, mode:'observation',
+  session_id:'synthetic:observed', source:'codex', account:'synthetic', state, live:true,
+  health:'observed', inferred:true, task:'Synthetic task', activity:'Synthetic reply',
+  last_seen:now, started_at:now, operations:[], ...extra});
+const snapshot = runs => ({stream_id:'attention-test', cursor:1, server_time:now, runs,
+  profiles:[], source_errors:{}, ai:{enabled:false}, stale_after_seconds:15,
+  activity:{bucket_seconds:10, buckets:60, end:now, runs:{busy:new Array(60).fill(1)}}});
+function browser(initial, past) {
+  let document, stream;
+  class Element {
+    constructor(tag) {
+      this.tagName = tag; this.children = []; this.dataset = {}; this.listeners = {}; this.attrs = {};
+      this.value = ''; this.hidden = false; this._text = ''; this.options = [];
+      this.style = {setProperty(k,v) {this[k] = v;}, removeProperty(k) {delete this[k];}};
+      this.classList = {toggle:(name, force) => {
+        const classes = new Set((this.className || '').split(' ').filter(Boolean));
+        const enabled = force ?? !classes.has(name);
+        if (enabled) classes.add(name); else classes.delete(name);
+        this.className = [...classes].join(' ');
+      }};
+    }
+    set textContent(value) {this._text = String(value); this.children = [];}
+    get textContent() {return this._text + this.children.map(c => typeof c === 'string' ? c : c.textContent).join('');}
+    append(...items) {this.children.push(...items);}
+    replaceChildren(...items) {this.children = items; this._text = ''; this.options = [...items];}
+    setAttribute(key, value) {this.attrs[key] = value;}
+    getAttribute(key) {return this.attrs[key];}
+    addEventListener(key, fn) {this.listeners[key] = fn;}
+    focus() {document.activeElement = this;}
+    blur() {}
+    scrollIntoView() {}
+    querySelectorAll(selector) {
+      const key = (selector.match(/^\[data-([a-z-]+)\]$/) || [])[1];
+      const prop = key ? key.replace(/-([a-z])/g, (_, c) => c.toUpperCase()) : 'focusKey';
+      return flatten(this).filter(el => el.dataset[prop] !== undefined);
+    }
+  }
+  const ids = {};
+  const element = id => ids[id] ||= new Element(id.endsWith('filter') ? 'select' : 'div');
+  ['active','waiting','all'].forEach(view => {
+    const button = new Element('button'); button.dataset.view = view; element('views').append(button);
+  });
+  element('window-filter').value = '604800000';
+  const listeners = {};
+  document = {getElementById:element, createElement:tag => new Element(tag), querySelectorAll:() => [],
+    activeElement:null, addEventListener:(key, fn) => {listeners[key] = fn;}};
+  class Option extends Element {constructor(text,value) {super('option'); this.textContent = text; this.value = value;}}
+  class EventSource {constructor() {stream = this; this.listeners = {};} addEventListener(key, fn) {this.listeners[key] = fn;}}
+  const requests = [], posts = [];
+  let focusStatus = 200, focusHold = null;
+  const context = {document, Option, EventSource, console, setInterval:() => {}, setTimeout:() => {},
+    localStorage:{getItem:key => stored[key] ?? null, setItem:(key,value) => {stored[key] = value;}},
+    fetch:async (url, options = {}) => {
+      requests.push(url);
+      if (options.method === 'POST') {
+        posts.push({url, headers:options.headers});
+        if (focusHold) await focusHold;
+        return {ok:focusStatus === 200, status:focusStatus};
+      }
+      const data = url.startsWith('/api/snapshot?at=') ? past : url.endsWith('/focus') ? {available:true, kind:'focus', label:'Synthetic terminal'} :
+        url.startsWith('/api/runs/') ? {events:[], next_cursor:0, has_more:false} : initial;
+      return {ok:true, json:async () => data};
+    }};
+  vm.runInNewContext(source, context);
+  return {ids, requests, posts, focusResult:status => {focusStatus = status;}, holdFocus:promise => {focusHold = promise;},
+    send:(runs, extra = {}) => stream.listeners.snapshot({data:JSON.stringify({...snapshot(runs), ...extra})}),
+    escape:() => listeners.keydown({key:'Escape', target:{tagName:'BODY'}, preventDefault(){}})};
+}
+const rows = board => board.ids.runs.children.filter(el => el.dataset.runId);
+const row = (board, id) => rows(board).find(el => el.dataset.runId === id);
+const isNew = el => el && flatten(el).some(child => (child.className || '').split(' ').includes('new-badge'));
+const inspect = async (board, id) => {
+  assert.ok(row(board, id), `session ${id} stays available in its existing row`);
+  if (row(board, id).attrs['aria-expanded'] === 'true') {
+    row(board, id).listeners.click(); await tick();
+  }
+  row(board, id).listeners.click(); await tick();
+};
+(async () => {
+  const idle = run('longstanding', 'idle');
+  const busy = run('busy', 'working');
+  const reading = run('reading', 'working');
+  const approval = run('approval', 'waiting_user');
+  let current = [idle, busy, reading, approval];
+  let board = browser(snapshot(current)); await tick();
+  assert.ok(row(board, 'longstanding'), 'existing idle windows stay visible');
+  assert.ok(!isNew(row(board, 'longstanding')), 'existing idle windows establish a quiet baseline');
+  assert.ok(!isNew(row(board, 'approval')), 'startup questions are pending, not newly finished');
+  assert.deepEqual(rows(board).map(el => el.dataset.runId), ['approval','busy','reading','longstanding'],
+    'pending questions lead, running sessions follow, and baseline turns stay below them');
+  assert.ok(!flatten(board.ids.runs).some(el => el.dataset.group === 'already-waiting'), 'no new waiting group changes the layout');
+  await inspect(board, 'reading');
+  const frozen = rows(board).map(el => el.dataset.runId);
+  const finished = {...busy, state:'idle', last_seen:later(1)};
+  current = [idle, finished, reading, approval]; board.send(current); await tick();
+  assert.deepEqual(rows(board).map(el => el.dataset.runId), frozen, 'reading keeps table rows still');
+  assert.ok(isNew(row(board, 'busy')), 'a newly finished reply gets a flag on its existing row');
+  board.ids.search.value = 'reading'; board.ids.search.listeners.input(); await tick();
+  board.ids.search.value = ''; board.ids.search.listeners.input(); await tick();
+  assert.ok(isNew(row(board, 'busy')), 'filtering never acknowledges an unread reply');
+  await inspect(board, 'busy');
+  assert.ok(!isNew(row(board, 'busy')), 'opening the reply clears its new flag');
+  assert.ok(row(board, 'busy').textContent.includes('your turn'), 'viewing never puts a turn at rest');
+  assert.ok(!row(board, 'busy').textContent.includes('at rest'));
+  board.escape(); await tick();
+  assert.ok(row(board, 'busy'), 'checked replies keep their existing visible row');
+  await inspect(board, 'approval');
+  assert.ok(row(board, 'approval').textContent.includes('needs you'), 'viewing an unresolved question keeps it pending');
+  assert.ok(!isNew(row(board, 'approval')));
+  board.send([idle, finished, reading, {...approval, last_seen:later(1)}]); await tick();
+  assert.ok(!isNew(row(board, 'approval')), 'a heartbeat never rearms an unchanged question');
+  board.escape(); await tick();
+  board = browser(snapshot(current)); await tick();
+  assert.ok(row(board, 'busy') && !isNew(row(board, 'busy')), 'checked replies stay visible and checked after reload');
+  const resumed = {...busy, last_seen:later(2)};
+  board.send([idle, resumed, reading, approval]); await tick();
+  assert.ok(!isNew(row(board, 'busy')), 'running sessions have no new flag');
+  const finishedAgain = {...finished, last_seen:later(3)};
+  current = [idle, finishedAgain, reading, approval]; board.send(current); await tick();
+  assert.ok(isNew(row(board, 'busy')), 'the next finished turn rearms its flag');
+  board = browser(snapshot(current)); await tick();
+  assert.ok(isNew(row(board, 'busy')), 'an unviewed reply survives reload');
+  const historical = {...snapshot([run('busy', 'waiting_user', {last_seen:later(-290)})]), at:later(-290), server_time:later(-290)};
+  board = browser(snapshot(current), historical); await tick();
+  const beforeHistory = JSON.stringify(stored);
+  board.ids.flux.children.filter(el => el.className === 'col')[30].listeners.click(); await tick();
+  await inspect(board, 'busy');
+  assert.ok(!isNew(row(board, 'busy')), 'historical rows do not display live unread flags');
+  assert.equal(JSON.stringify(stored), beforeHistory, 'viewing history never changes checked turns');
+  flatten(board.ids['past-bar']).find(el => el.tagName === 'button').listeners.click(); await tick();
+  assert.ok(isNew(row(board, 'busy')), 'returning live preserves pending new replies');
+  const parent = run('parent', 'working');
+  const worker = run('worker', 'working', {parent_run_id:'parent'});
+  board = browser(snapshot([parent, worker])); await tick();
+  board.send([{...parent, state:'idle', last_seen:later(1)}, worker]); await tick();
+  assert.ok(!isNew(row(board, 'parent')), 'an idle parent with a running child still counts as working');
+  board.send([{...parent, state:'idle', last_seen:later(1)}, {...worker, health:'stale'}]); await tick();
+  assert.ok(!isNew(row(board, 'parent')), 'loss of a running child signal never announces an old parent reply');
+  board.send([{...parent, state:'idle', last_seen:later(1)}, {...worker, state:'idle'}]); await tick();
+  assert.ok(isNew(row(board, 'parent')), 'an actual child turn end flags its parent');
+  const selected = run('selected', 'working');
+  board = browser(snapshot([selected])); await tick();
+  await inspect(board, 'selected');
+  const selectedReply = {...selected, state:'idle', last_seen:later(1)};
+  board.send([selectedReply]); await tick();
+  assert.ok(isNew(row(board, 'selected')), 'a new turn in the open panel still needs acknowledgment');
+  board.send([selectedReply], {server_time:later(13 * 3600)}); await tick();
+  assert.ok(isNew(row(board, 'selected')), 'unread turns keep their flag after twelve hours');
+  assert.ok(row(board, 'selected').textContent.includes('your turn'));
+  assert.ok(board.ids.counts.textContent.includes('1 needs you'));
+  await inspect(board, 'selected');
+  assert.ok(!isNew(row(board, 'selected')));
+  assert.ok(board.ids.counts.textContent.includes('1 idle'), 'checking an aged turn refreshes header counts');
+  assert.ok(!board.ids.counts.textContent.includes('needs you'));
+  const sdkQuestion = run('sdk-question', 'waiting_user', {mode:'sdk', inferred:false, health:'fresh'});
+  board = browser(snapshot([sdkQuestion])); await tick();
+  await inspect(board, 'sdk-question');
+  board.send([{...sdkQuestion, last_seen:later(1)}]); await tick();
+  assert.ok(row(board, 'sdk-question').textContent.includes('needs you'), 'SDK questions remain unresolved after viewing');
+  assert.ok(!isNew(row(board, 'sdk-question')), 'SDK heartbeat timestamps never create a new question');
+  board.send([{...sdkQuestion, activity:'A different synthetic question', last_seen:later(2)}]); await tick();
+  assert.ok(isNew(row(board, 'sdk-question')), 'a new SDK question rearms its flag');
+  board = browser(snapshot([busy]), historical); await tick();
+  board.ids.flux.children.filter(el => el.className === 'col')[30].listeners.click(); await tick();
+  board.send([finishedAgain]); await tick();
+  await inspect(board, 'busy');
+  assert.ok(!isNew(row(board, 'busy')), 'past rows never display new flags from live updates');
+  flatten(board.ids['past-bar']).find(el => el.tagName === 'button').listeners.click(); await tick();
+  assert.ok(isNew(row(board, 'busy')), 'turns arriving during history remain unread on return');
+  board = browser(snapshot([busy])); await tick();
+  board.send([finished]); await tick();
+  row(board, 'busy').listeners.pointerenter(); await tick();
+  const openMark = () => flatten(row(board, 'busy')).find(el => el.dataset.openRun === 'busy');
+  assert.ok(openMark(), 'a native session offers a direct app open control');
+  board.focusResult(409);
+  openMark().listeners.click({stopPropagation(){}}); await tick();
+  assert.ok(isNew(row(board, 'busy')), 'a failed app open leaves the reply unread');
+  assert.equal(row(board, 'busy').attrs['aria-expanded'], 'false');
+  board.focusResult(200);
+  openMark().listeners.click({stopPropagation(){}}); await tick();
+  assert.ok(row(board, 'busy') && !isNew(row(board, 'busy')), 'successful app opening clears the flag and keeps the row');
+  assert.deepEqual(board.posts, [
+    {url:'/api/runs/busy/focus', headers:{'X-Spiritboard':'focus'}},
+    {url:'/api/runs/busy/focus', headers:{'X-Spiritboard':'focus'}}
+  ]);
+  board = browser(snapshot([busy])); await tick();
+  board.send([finished]); await tick();
+  row(board, 'busy').listeners.pointerenter(); await tick();
+  let releaseFocus;
+  board.holdFocus(new Promise(resolve => {releaseFocus = resolve;}));
+  openMark().listeners.click({stopPropagation(){}}); await tick();
+  board.send([{...busy, last_seen:later(2)}]); await tick();
+  board.send([finishedAgain]); await tick();
+  releaseFocus(); await tick();
+  assert.ok(isNew(row(board, 'busy')), 'a slow app open never acknowledges a later finished turn');
+  const nativeWorking = run('native-handoff', 'working', {state_observed_at:now, last_seen:later(-30)});
+  board = browser(snapshot([nativeWorking])); await tick();
+  const nativeReply = {...nativeWorking, state:'idle', state_observed_at:later(1)};
+  board.send([nativeReply]); await tick();
+  assert.ok(isNew(row(board, 'native-handoff')));
+  await inspect(board, 'native-handoff');
+  board.send([{...nativeReply, state_observed_at:undefined, last_seen:later(2)}]); await tick();
+  assert.ok(!isNew(row(board, 'native-handoff')), 'transcript catch-up never rearms the native turn already checked');
+  const newerChecked = run('checked-later', 'idle', {last_seen:later(100)});
+  const rankingBusy = run('ranking-busy', 'working');
+  board = browser(snapshot([newerChecked, rankingBusy, reading])); await tick();
+  await inspect(board, 'checked-later'); board.escape(); await tick();
+  assert.deepEqual(rows(board).map(el => el.dataset.runId), ['ranking-busy','reading','checked-later']);
+  board.send([newerChecked, {...rankingBusy, state:'idle', last_seen:later(1)}, reading]); await tick();
+  assert.deepEqual(rows(board).map(el => el.dataset.runId), ['ranking-busy','reading','checked-later'],
+    'a new reply outranks a checked reply with a newer timestamp, while running outranks checked turns');
+  await inspect(board, 'ranking-busy'); board.escape(); await tick();
+  assert.deepEqual(rows(board).map(el => el.dataset.runId), ['reading','checked-later','ranking-busy'],
+    'checking a reply restores running priority without hiding any row');
+  const contextParent = run('context-parent', 'working');
+  const inputChild = run('input-child', 'working', {parent_run_id:'context-parent'});
+  board = browser(snapshot([newerChecked, contextParent, inputChild, reading])); await tick();
+  board.send([newerChecked, contextParent, {...inputChild, state:'waiting_user', last_seen:later(1)}, reading]); await tick();
+  assert.deepEqual(rows(board).map(el => el.dataset.runId), ['context-parent','input-child','reading','checked-later'],
+    'a newly pending child raises its whole subtree ahead of ordinary work');
+  assert.ok(isNew(row(board, 'input-child')) && !isNew(row(board, 'context-parent')));
+})().catch(error => {console.error(error); process.exitCode = 1;});
+"""
+        result = subprocess.run(
+            [shutil.which("node"), "-e", script, str(STATIC / "app.js")],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     @unittest.skipUnless(shutil.which("node"), "Node is optional; browser syntax/DOM check skipped")
     def test_browser_renders_table_harnesses_and_private_text_safely(self):
