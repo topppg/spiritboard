@@ -142,8 +142,8 @@ New harnesses plug in as one module each (see [the source guide](https://github.
   shows newly finished turns and unanswered questions or approvals, with a **new**
   marker for changes you have not checked. Hide its cards while reading and the
   count stays visible. A new reply stays actionable until checked, even beyond
-  the normal your-turn time window. Opening a reply clears its new marker; it still remains
-  your turn, without needing **let it rest**. Questions and approvals stay in the
+  the normal your-turn time window. Opening a reply clears its new marker without
+  marking it **at rest**. Questions and approvals stay in the
   strip until resolved, even after you check them. New markers and checked turns
   are remembered in this browser across reloads.
   On the first visit, turns already waiting form the baseline rather than all
