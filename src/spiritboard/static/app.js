@@ -10,7 +10,6 @@
   // A turn left unanswered in a still-open session stays yours this long.
   const OPEN_TURN_WINDOW = 12 * 3600 * 1000;
   const OPEN_IDLE = "open-idle";
-  const ALREADY_WAITING = "already-waiting";
   // A session that could not be opened, or a server that did not answer, is asked again after this long.
   const OPEN_RETRY = 15000;
   const MAX_ROWS = 300;
@@ -20,8 +19,6 @@
   const KIND_NAMES = { codex: "Codex", claude: "Claude", opencode: "opencode", pi: "Pi", hermes: "Hermes", dsh: "DeepSeek Harness", grokbot: "Grok Bot" };
   const state = { snapshot: null, selected: null, view: "active", sort: null, descending: false, order: [], frozen: new Map(), split: 0, colors: new Map(), events: [], nextCursor: 0, more: false, eventBusy: false, request: 0, fetching: false, live: false, lastSnapshotAt: 0, fingerprint: null, historyOpen: false, tableKey: "", target: null, targetNote: "", targetFallback: false, latest: null, past: null, pastRequest: 0, zoom: 600, chart: null, chartAt: 0, rested: loadRested(), editing: null, draft: "", folds: new Map(), openTargets: new Map(), openFlashes: new Map() };
   state.attention = loadAttention();
-  state.attentionKey = "";
-  state.attentionOpen = true;
   // Chart windows in seconds: heading, then the left and middle axis labels.
   const ZOOMS = { 600: ["last 10 minutes", "-10m", "-5m"], 3600: ["last hour", "-1h", "-30m"], 86400: ["last 24 hours", "-24h", "-12h"],
     604800: ["last 7 days", "-7d", "-3.5d"], 2592000: ["last 30 days", "-30d", "-15d"] };
@@ -136,61 +133,6 @@
     if (state.past || !run || !isNew(run)) return;
     state.attention.entries[run.run_id].checked = true;
     saveAttention();
-  }
-  function renderAttention() {
-    const host = $("attention");
-    host.hidden = Boolean(state.past);
-    if (state.past) return;
-    const pending = state.snapshot.runs.filter((run) => statusOf(run).key === "needs" && (isNew(run) || !statusOf(run).turn))
-      .sort((a, b) => Number(isNew(b)) - Number(isNew(a)) || (time(observedAt(b)) || 0) - (time(observedAt(a)) || 0) || a.run_id.localeCompare(b.run_id));
-    host.hidden = !pending.length;
-    const count = pending.filter(isNew).length;
-    const title = `Needs attention · ${count ? `${count} new` : `${pending.length} pending`}`;
-    if ($("attention-title").textContent !== title) $("attention-title").textContent = title;
-    const toggle = $("attention-toggle");
-    toggle.textContent = state.attentionOpen ? "hide" : "show";
-    toggle.setAttribute("aria-expanded", String(state.attentionOpen));
-    $("attention-items").hidden = !state.attentionOpen;
-    const key = JSON.stringify([pending.map((run) => [run.run_id, nameOf(run), run.parent_run_id, observedAt(run), isNew(run), statusOf(run).turn]), Math.floor(serverNow() / 60000)]);
-    if (key === state.attentionKey) return;
-    state.attentionKey = key;
-    const focused = document.activeElement?.dataset?.focusKey;
-    const items = $("attention-items"); items.replaceChildren();
-    for (const run of pending) {
-      const card = node("div", null, "attention-card"); card.dataset.attentionId = run.run_id;
-      const inspect = node("button", null, "attention-inspect"); inspect.type = "button";
-      inspect.dataset.focusKey = `attention-${run.run_id}`;
-      inspect.append(node("span", nameOf(run), "attention-name"));
-      if (isNew(run)) inspect.append(node("span", "new", "new-badge"));
-      const parent = state.snapshot.runs.find((r) => r.run_id === run.parent_run_id);
-      const detail = `${statusOf(run).turn ? "finished" : "needs you"} ${ago(observedAt(run))}${parent ? ` · in ${nameOf(parent)}` : ""}`;
-      inspect.append(node("span", detail, "attention-detail"));
-      inspect.title = "Show reply · clears table filters";
-      inspect.addEventListener("click", () => inspectAttention(run.run_id));
-      card.append(inspect);
-      if (mayOpen(run)) {
-        const open = node("button", "↗ open", "attention-open"); open.type = "button";
-        open.dataset.focusKey = `attention-open-${run.run_id}`;
-        open.title = "Open its window, or show the reply here if unavailable";
-        open.addEventListener("click", async () => {
-          open.disabled = true;
-          const target = await fetchTarget(run.run_id);
-          if (state.past) { open.disabled = false; return; }
-          if (target?.kind !== "focus") { inspectAttention(run.run_id); return; }
-          const ok = await openApp(run.run_id);
-          open.disabled = false;
-          if (!ok) { open.textContent = "try again"; open.title = "Could not open its window. Try again or select the reply."; }
-        });
-        card.append(open);
-      }
-      items.append(card);
-    }
-    if (focused) [...items.querySelectorAll("[data-focus-key]")].find((el) => el.dataset.focusKey === focused)?.focus({ preventScroll: true });
-  }
-  function inspectAttention(id) {
-    state.view = "active"; $("harness-filter").value = ""; $("search").value = "";
-    renderViews(); selectRun(id);
-    byFocusKey(`select:${id}`)?.scrollIntoView?.({ block: "center", behavior: "smooth" });
   }
   function healthOf(run, now = serverNow()) {
     const health = typeof run.health === "object" ? run.health?.state : run.health;
@@ -349,7 +291,6 @@
   function render() {
     if (!state.snapshot) return;
     updateStatuses();
-    renderAttention();
     // The chart always shows the live journal; colours follow its harnesses.
     const current = harnesses(state.latest.runs);
     const list = state.past ? harnesses(state.snapshot.runs, false) : current;
@@ -567,7 +508,9 @@
   }
 
   function workRank(run) {
-    const key = statusOf(run).key;
+    const status = statusOf(run);
+    const key = status.key;
+    if (!state.past && key === "needs" && status.turn && !isNew(run)) return 2;
     return { needs: 0, running: 1, waiting: 2, rest: 3, idle: 3, unknown: 4, quiet: 5, failed: 6, done: 7 }[key] ?? 8;
   }
   function sortValue(run) {
@@ -643,7 +586,7 @@
     let cap = MAX_ROWS, cut = false;
     const renderRun = (run, depth, orphan) => {
       if (visited.has(run.run_id) || !visible.has(run.run_id)) return;
-      if (state.order.length >= cap && run.run_id !== state.selected && !openPath.has(run.run_id)) { cut = true; return; }
+      if (state.order.length >= cap) { cut = true; return; }
       visited.add(run.run_id);
       state.order.push(run.run_id);
       const all = children.get(run.run_id) || [];
@@ -667,37 +610,18 @@
     // While a row is open, sessions listed above that line stay there, so the open row never jumps.
     const openIdle = roots.filter((r) => visible.has(r.run_id) && statusOf(r).key === "idle" && r.live === true
       && rank(r).rank >= 3 && !(state.selected && frozen(r) < state.split));
-    const alreadyWaiting = state.past || state.view === "all" ? [] : roots.filter((r) => visible.has(r.run_id)
-      && statusOf(r).key === "needs" && statusOf(r).turn && !isNew(r)
-      && !(children.get(r.run_id) || []).some((c) => rank(c).rank < 3)
-      && !(state.selected && frozen(r) < state.split));
-    const waitingFolded = (state.folds.get(ALREADY_WAITING) ?? true) && !$("search").value.trim()
-      && !alreadyWaiting.some((r) => r.run_id === state.selected || openPath.has(r.run_id));
     const groupFolded = (state.folds.get(OPEN_IDLE) ?? true) && !openIdle.some((r) => r.run_id === state.selected || openPath.has(r.run_id));
-    roots.filter((r) => !openIdle.includes(r) && !alreadyWaiting.includes(r)).forEach(renderRoot);
+    roots.filter((r) => !openIdle.includes(r)).forEach(renderRoot);
     const split = state.order.length;
     if (cut) host.append(node("p", `Showing the first ${MAX_ROWS} agents. Narrow the view or search to see more.`, "empty"));
-    if (alreadyWaiting.length) {
-      cap = state.order.length + MAX_ROWS;
-      host.append(waitingGroupRow(alreadyWaiting.length, waitingFolded));
-      if (!waitingFolded) alreadyWaiting.forEach(renderRoot);
-    }
     if (openIdle.length) {
       // The group has its own row budget, so a long history never hides it.
-      cap = state.order.length + MAX_ROWS;
+      cap = split + MAX_ROWS;
       host.append(groupRow(openIdle.length, groupFolded));
       if (!groupFolded) openIdle.forEach(renderRoot);
     }
     if (!state.selected) { state.frozen = new Map(state.order.map((id, i) => [id, i])); state.split = split; }
     if (focused) [...host.querySelectorAll("[data-focus-key]")].find((el) => el.dataset.focusKey === focused)?.focus({ preventScroll: true });
-  }
-  function waitingGroupRow(count, folded) {
-    const button = node("button", `${folded ? "▸" : "▾"} ${count} already waiting`, "waiting-group-row");
-    button.type = "button"; button.dataset.group = ALREADY_WAITING; button.dataset.focusKey = `group:${ALREADY_WAITING}`;
-    button.setAttribute("aria-expanded", String(!folded));
-    button.title = "Turns already waiting when you opened the board, or replies you have checked";
-    button.addEventListener("click", () => toggleFold(ALREADY_WAITING, !folded));
-    return button;
   }
   function groupRow(count, folded) {
     const button = node("button", `${folded ? "▸" : "▾"} ${count} open · idle`, "group-row");
@@ -1034,9 +958,8 @@
       if (!ok) state.openTargets.delete(id);
       paintOpenMarks(id);
     }, ok ? 1500 : 2500);
-    if (id !== state.selected) return ok;
+    if (id !== state.selected) return;
     state.targetNote = ok ? "opened" : "could not open"; renderDetail();
-    return ok;
   }
   function paintOpenMarks(id) { [...$("runs").querySelectorAll("[data-open-run]")].filter((mark) => mark.dataset.openRun === id).forEach(paintOpenMark); }
   function paintOpenMark(mark) {
@@ -1139,7 +1062,7 @@
     state.selected = id; state.events = []; state.nextCursor = 0; state.more = false; state.historyOpen = false;
     state.target = null; state.targetNote = ""; state.targetFallback = false;
     checkAttention(state.snapshot?.runs.find((run) => run.run_id === id));
-    if (state.snapshot) { updateStatuses(); renderCounts(); renderAttention(); }
+    if (state.snapshot) { updateStatuses(); renderCounts(); }
     renderDetail();
     if (id) { loadTarget(id); await loadEvents(true); }
   }
@@ -1217,7 +1140,6 @@
     });
   });
   [...$("views").children].forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
-  $("attention-toggle").addEventListener("click", () => { state.attentionOpen = !state.attentionOpen; renderAttention(); });
   document.querySelectorAll("[data-sort]").forEach((button) => button.addEventListener("click", () => {
     const key = button.dataset.sort;
     if (state.sort === key && state.descending !== ["rate", "seen"].includes(key)) {

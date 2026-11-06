@@ -97,19 +97,6 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 32px; display: flex; fle
 .axis .now { color: var(--muted); }
 
 .agents { display: flex; flex-direction: column; gap: 10px; }
-.attention { position: sticky; top: 8px; z-index: 3; border: 1px solid #fbbf2455; border-radius: var(--r-lg); background: var(--bar); box-shadow: 0 4px 20px #0006; }
-.attention-head { display: flex; align-items: center; gap: 12px; padding: 8px 14px; }
-.attention-head h2 { color: var(--wait); }
-.attention-note { color: var(--muted); font-size: var(--fs-xs); }
-.attention-head button { margin-left: auto; min-height: 28px; color: var(--wait); }
-.attention-items { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 6px; padding: 0 8px 8px; max-height: 154px; overflow-y: auto; }
-.attention-card { display: flex; align-items: stretch; min-width: 0; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel); }
-.attention-inspect { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; text-align: left; padding: 8px 10px; border-color: transparent; }
-.attention-inspect:hover { border-color: var(--wait); }
-.attention-open { flex: none; align-self: center; margin-right: 6px; padding: 3px 7px; color: var(--wait); font-size: var(--fs-sm); }
-.attention-name { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.attention-detail { flex-basis: 100%; color: var(--muted); font-size: var(--fs-sm); }
-.new-badge { flex: none; border-radius: var(--r-sm); padding: 0 5px; background: #fbbf2420; color: var(--wait); font-size: var(--fs-xs); font-weight: 600; }
 .past-bar { margin: -4px 0; color: var(--wait); font-size: var(--fs-sm); }
 .past-bar button { min-height: 0; padding: 0; border: 0; color: var(--wait); text-decoration: underline; text-underline-offset: 3px; }
 .detail-actions .app-link:disabled { opacity: .45; cursor: not-allowed; }
@@ -149,8 +136,6 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 32px; display: flex; fle
 .run-row.quiet, .run-row.closed, .run-row.idle, .run-row.idle .agent-name, .run-row.idle .doing { color: var(--muted); }
 .group-row { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; min-height: 0; padding: 6px 18px 6px calc(18px + var(--status-w, 132px) + 16px); background: transparent; color: var(--muted); font-size: var(--fs-sm); cursor: pointer; }
 .group-row:hover, .group-row:focus-visible { color: var(--text); background: #ffffff06; }
-.waiting-group-row { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; min-height: 0; padding: 8px 18px; color: var(--muted); font-size: var(--fs-sm); }
-.waiting-group-row:hover { color: var(--text); background: #ffffff06; }
 .run-row.done { color: var(--muted); }
 .run-row.context { opacity: .65; }
 .run-row.sub { font-size: 13.5px; }
@@ -172,6 +157,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 32px; display: flex; fle
 .run-row.sub .status { font-weight: 400; color: var(--muted); }
 .run-row.sub .status.g-needs { color: var(--wait); } .run-row.sub .status.g-failed { color: var(--err); }
 .agent-name { font-weight: 500; }
+.new-badge { flex: none; border-radius: var(--r-sm); padding: 0 5px; background: #fbbf2420; color: var(--wait); font-size: var(--fs-xs); font-weight: 600; }
 .cell.agent { display: flex; align-items: center; gap: 8px; }
 .agent .note, .agent .fold { flex: none; }
 .cell.agent > .agent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

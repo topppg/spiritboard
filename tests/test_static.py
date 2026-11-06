@@ -64,12 +64,17 @@ class StaticTests(unittest.TestCase):
                 "more",
                 "top-actions",
                 "keys-toggle",
-                "attention",
-                "attention-title",
-                "attention-items",
             }
             <= parser.ids
         )
+        self.assertTrue(
+            parser.ids.isdisjoint(
+                {"attention", "attention-title", "attention-items", "attention-toggle"}
+            )
+        )
+        css = (STATIC / "style.css").read_text()
+        self.assertNotIn(".attention-card", css)
+        self.assertNotIn(".waiting-group-row", css)
         script = (STATIC / "app.js").read_text()
         for forbidden in (
             "innerHTML",
@@ -96,7 +101,7 @@ class StaticTests(unittest.TestCase):
         self.assertIn(".row-open { display: none; }", narrow)
 
     @unittest.skipUnless(shutil.which("node"), "Node is optional; browser syntax/DOM check skipped")
-    def test_attention_tracks_new_turns_separately_from_checked_waiting_sessions(self):
+    def test_new_flags_track_turns_in_existing_rows_without_changing_the_board_layout(self):
         script = r"""
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
 const source = fs.readFileSync(process.argv[1], 'utf8');
@@ -144,7 +149,6 @@ function browser(initial, past) {
   }
   const ids = {};
   const element = id => ids[id] ||= new Element(id.endsWith('filter') ? 'select' : 'div');
-  ['attention','attention-title','attention-items','attention-toggle'].forEach(element);
   ['active','waiting','all'].forEach(view => {
     const button = new Element('button'); button.dataset.view = view; element('views').append(button);
   });
@@ -176,14 +180,13 @@ function browser(initial, past) {
 }
 const rows = board => board.ids.runs.children.filter(el => el.dataset.runId);
 const row = (board, id) => rows(board).find(el => el.dataset.runId === id);
-const cards = board => flatten(board.ids['attention-items']).filter(el => el.dataset.attentionId);
-const card = (board, id) => cards(board).find(el => el.dataset.attentionId === id);
 const isNew = el => el && flatten(el).some(child => (child.className || '').split(' ').includes('new-badge'));
-const group = board => flatten(board.ids.runs).find(el => el.dataset.group === 'already-waiting');
-const openAttention = async (board, id) => {
-  const button = flatten(card(board, id)).find(el => el.dataset.focusKey === `attention-${id}`);
-  assert.ok(button, `attention entry for ${id} offers an inspect button`);
-  button.listeners.click(); await tick();
+const inspect = async (board, id) => {
+  assert.ok(row(board, id), `session ${id} stays available in its existing row`);
+  if (row(board, id).attrs['aria-expanded'] === 'true') {
+    row(board, id).listeners.click(); await tick();
+  }
+  row(board, id).listeners.click(); await tick();
 };
 (async () => {
   const idle = run('longstanding', 'idle');
@@ -192,93 +195,90 @@ const openAttention = async (board, id) => {
   const approval = run('approval', 'waiting_user');
   let current = [idle, busy, reading, approval];
   let board = browser(snapshot(current)); await tick();
-  assert.ok(!card(board, 'longstanding'), 'existing idle windows establish a quiet baseline');
-  assert.ok(card(board, 'approval'), 'unresolved questions stay prominent at startup');
-  assert.ok(!isNew(card(board, 'approval')), 'startup questions are pending, not newly finished');
-  assert.ok(group(board), 'checked and pre-existing turns share an already waiting group');
-  assert.equal(group(board).attrs['aria-expanded'], 'false');
-  assert.ok(!row(board, 'longstanding'), 'already waiting starts collapsed');
-  group(board).listeners.click(); await tick();
-  assert.ok(row(board, 'longstanding'));
-  group(board).listeners.click(); await tick();
-  row(board, 'reading').listeners.click(); await tick();
+  assert.ok(row(board, 'longstanding'), 'existing idle windows stay visible');
+  assert.ok(!isNew(row(board, 'longstanding')), 'existing idle windows establish a quiet baseline');
+  assert.ok(!isNew(row(board, 'approval')), 'startup questions are pending, not newly finished');
+  assert.deepEqual(rows(board).map(el => el.dataset.runId), ['approval','busy','reading','longstanding'],
+    'pending questions lead, running sessions follow, and baseline turns stay below them');
+  assert.ok(!flatten(board.ids.runs).some(el => el.dataset.group === 'already-waiting'), 'no new waiting group changes the layout');
+  await inspect(board, 'reading');
   const frozen = rows(board).map(el => el.dataset.runId);
   const finished = {...busy, state:'idle', last_seen:later(1)};
   current = [idle, finished, reading, approval]; board.send(current); await tick();
   assert.deepEqual(rows(board).map(el => el.dataset.runId), frozen, 'reading keeps table rows still');
-  assert.ok(isNew(card(board, 'busy')), 'new replies surface independently of frozen table order');
-  assert.ok(board.ids['attention-title'].textContent.includes('1 new'));
+  assert.ok(isNew(row(board, 'busy')), 'a newly finished reply gets a flag on its existing row');
   board.ids.search.value = 'reading'; board.ids.search.listeners.input(); await tick();
-  assert.ok(isNew(card(board, 'busy')), 'table filters never bury new attention');
   board.ids.search.value = ''; board.ids.search.listeners.input(); await tick();
-  await openAttention(board, 'busy');
-  assert.ok(!card(board, 'busy'), 'opening the reply acknowledges its new marker');
+  assert.ok(isNew(row(board, 'busy')), 'filtering never acknowledges an unread reply');
+  await inspect(board, 'busy');
+  assert.ok(!isNew(row(board, 'busy')), 'opening the reply clears its new flag');
   assert.ok(row(board, 'busy').textContent.includes('your turn'), 'viewing never puts a turn at rest');
   assert.ok(!row(board, 'busy').textContent.includes('at rest'));
   board.escape(); await tick();
-  assert.ok(!row(board, 'busy'), 'checked replies move into the collapsed waiting group');
-  await openAttention(board, 'approval');
-  assert.ok(card(board, 'approval'), 'viewing an unresolved question keeps it in the queue');
-  assert.ok(!isNew(card(board, 'approval')));
+  assert.ok(row(board, 'busy'), 'checked replies keep their existing visible row');
+  await inspect(board, 'approval');
+  assert.ok(row(board, 'approval').textContent.includes('needs you'), 'viewing an unresolved question keeps it pending');
+  assert.ok(!isNew(row(board, 'approval')));
   board.send([idle, finished, reading, {...approval, last_seen:later(1)}]); await tick();
-  assert.ok(!isNew(card(board, 'approval')), 'a heartbeat never rearms an unchanged question');
+  assert.ok(!isNew(row(board, 'approval')), 'a heartbeat never rearms an unchanged question');
   board.escape(); await tick();
   board = browser(snapshot(current)); await tick();
-  assert.ok(!card(board, 'busy'), 'acknowledged replies stay checked after reload');
+  assert.ok(row(board, 'busy') && !isNew(row(board, 'busy')), 'checked replies stay visible and checked after reload');
   const resumed = {...busy, last_seen:later(2)};
   board.send([idle, resumed, reading, approval]); await tick();
-  assert.ok(!card(board, 'busy'), 'running sessions leave the attention queue');
+  assert.ok(!isNew(row(board, 'busy')), 'running sessions have no new flag');
   const finishedAgain = {...finished, last_seen:later(3)};
   current = [idle, finishedAgain, reading, approval]; board.send(current); await tick();
-  assert.ok(isNew(card(board, 'busy')), 'the next finished turn rearms attention');
+  assert.ok(isNew(row(board, 'busy')), 'the next finished turn rearms its flag');
   board = browser(snapshot(current)); await tick();
-  assert.ok(isNew(card(board, 'busy')), 'an unviewed reply survives reload');
+  assert.ok(isNew(row(board, 'busy')), 'an unviewed reply survives reload');
   const historical = {...snapshot([run('busy', 'waiting_user', {last_seen:later(-290)})]), at:later(-290), server_time:later(-290)};
   board = browser(snapshot(current), historical); await tick();
   const beforeHistory = JSON.stringify(stored);
   board.ids.flux.children.filter(el => el.className === 'col')[30].listeners.click(); await tick();
-  row(board, 'busy').listeners.click(); await tick();
+  await inspect(board, 'busy');
+  assert.ok(!isNew(row(board, 'busy')), 'historical rows do not display live unread flags');
   assert.equal(JSON.stringify(stored), beforeHistory, 'viewing history never changes checked turns');
   flatten(board.ids['past-bar']).find(el => el.tagName === 'button').listeners.click(); await tick();
-  assert.ok(isNew(card(board, 'busy')), 'returning live preserves pending new replies');
+  assert.ok(isNew(row(board, 'busy')), 'returning live preserves pending new replies');
   const parent = run('parent', 'working');
   const worker = run('worker', 'working', {parent_run_id:'parent'});
   board = browser(snapshot([parent, worker])); await tick();
   board.send([{...parent, state:'idle', last_seen:later(1)}, worker]); await tick();
-  assert.ok(!card(board, 'parent'), 'an idle parent with a running child still counts as working');
+  assert.ok(!isNew(row(board, 'parent')), 'an idle parent with a running child still counts as working');
   board.send([{...parent, state:'idle', last_seen:later(1)}, {...worker, health:'stale'}]); await tick();
-  assert.ok(!card(board, 'parent'), 'loss of a running child signal never announces an old parent reply');
+  assert.ok(!isNew(row(board, 'parent')), 'loss of a running child signal never announces an old parent reply');
   board.send([{...parent, state:'idle', last_seen:later(1)}, {...worker, state:'idle'}]); await tick();
-  assert.ok(isNew(card(board, 'parent')), 'an actual child turn end releases its parent for attention');
+  assert.ok(isNew(row(board, 'parent')), 'an actual child turn end flags its parent');
   const selected = run('selected', 'working');
   board = browser(snapshot([selected])); await tick();
-  row(board, 'selected').listeners.click(); await tick();
+  await inspect(board, 'selected');
   const selectedReply = {...selected, state:'idle', last_seen:later(1)};
   board.send([selectedReply]); await tick();
-  assert.ok(isNew(card(board, 'selected')), 'a new turn in the open panel still needs acknowledgment');
+  assert.ok(isNew(row(board, 'selected')), 'a new turn in the open panel still needs acknowledgment');
   board.send([selectedReply], {server_time:later(13 * 3600)}); await tick();
-  assert.ok(isNew(card(board, 'selected')), 'unread turns stay prominent after twelve hours');
+  assert.ok(isNew(row(board, 'selected')), 'unread turns keep their flag after twelve hours');
   assert.ok(row(board, 'selected').textContent.includes('your turn'));
   assert.ok(board.ids.counts.textContent.includes('1 needs you'));
-  await openAttention(board, 'selected');
-  assert.ok(!card(board, 'selected'));
+  await inspect(board, 'selected');
+  assert.ok(!isNew(row(board, 'selected')));
   assert.ok(board.ids.counts.textContent.includes('1 idle'), 'checking an aged turn refreshes header counts');
   assert.ok(!board.ids.counts.textContent.includes('needs you'));
   const sdkQuestion = run('sdk-question', 'waiting_user', {mode:'sdk', inferred:false, health:'fresh'});
   board = browser(snapshot([sdkQuestion])); await tick();
-  await openAttention(board, 'sdk-question');
+  await inspect(board, 'sdk-question');
   board.send([{...sdkQuestion, last_seen:later(1)}]); await tick();
-  assert.ok(card(board, 'sdk-question'), 'SDK questions remain unresolved after viewing');
-  assert.ok(!isNew(card(board, 'sdk-question')), 'SDK heartbeat timestamps never create a new question');
+  assert.ok(row(board, 'sdk-question').textContent.includes('needs you'), 'SDK questions remain unresolved after viewing');
+  assert.ok(!isNew(row(board, 'sdk-question')), 'SDK heartbeat timestamps never create a new question');
   board.send([{...sdkQuestion, activity:'A different synthetic question', last_seen:later(2)}]); await tick();
-  assert.ok(isNew(card(board, 'sdk-question')), 'a new SDK question rearms attention');
+  assert.ok(isNew(row(board, 'sdk-question')), 'a new SDK question rearms its flag');
   board = browser(snapshot([busy]), historical); await tick();
   board.ids.flux.children.filter(el => el.className === 'col')[30].listeners.click(); await tick();
   board.send([finishedAgain]); await tick();
-  row(board, 'busy').listeners.click(); await tick();
-  assert.equal(board.ids.attention.hidden, true, 'past view keeps live attention out of historical rows');
+  await inspect(board, 'busy');
+  assert.ok(!isNew(row(board, 'busy')), 'past rows never display new flags from live updates');
   flatten(board.ids['past-bar']).find(el => el.tagName === 'button').listeners.click(); await tick();
-  assert.ok(isNew(card(board, 'busy')), 'turns arriving during history remain unread on return');
+  assert.ok(isNew(row(board, 'busy')), 'turns arriving during history remain unread on return');
   board = browser(snapshot([busy])); await tick();
   board.send([finished]); await tick();
   row(board, 'busy').listeners.pointerenter(); await tick();
@@ -286,11 +286,11 @@ const openAttention = async (board, id) => {
   assert.ok(openMark(), 'a native session offers a direct app open control');
   board.focusResult(409);
   openMark().listeners.click({stopPropagation(){}}); await tick();
-  assert.ok(isNew(card(board, 'busy')), 'a failed app open leaves the reply unread');
+  assert.ok(isNew(row(board, 'busy')), 'a failed app open leaves the reply unread');
   assert.equal(row(board, 'busy').attrs['aria-expanded'], 'false');
   board.focusResult(200);
   openMark().listeners.click({stopPropagation(){}}); await tick();
-  assert.ok(!card(board, 'busy'), 'successful app opening acknowledges the finished reply');
+  assert.ok(row(board, 'busy') && !isNew(row(board, 'busy')), 'successful app opening clears the flag and keeps the row');
   assert.deepEqual(board.posts, [
     {url:'/api/runs/busy/focus', headers:{'X-Spiritboard':'focus'}},
     {url:'/api/runs/busy/focus', headers:{'X-Spiritboard':'focus'}}
@@ -304,15 +304,33 @@ const openAttention = async (board, id) => {
   board.send([{...busy, last_seen:later(2)}]); await tick();
   board.send([finishedAgain]); await tick();
   releaseFocus(); await tick();
-  assert.ok(isNew(card(board, 'busy')), 'a slow app open never acknowledges a later finished turn');
+  assert.ok(isNew(row(board, 'busy')), 'a slow app open never acknowledges a later finished turn');
   const nativeWorking = run('native-handoff', 'working', {state_observed_at:now, last_seen:later(-30)});
   board = browser(snapshot([nativeWorking])); await tick();
   const nativeReply = {...nativeWorking, state:'idle', state_observed_at:later(1)};
   board.send([nativeReply]); await tick();
-  assert.ok(isNew(card(board, 'native-handoff')));
-  await openAttention(board, 'native-handoff');
+  assert.ok(isNew(row(board, 'native-handoff')));
+  await inspect(board, 'native-handoff');
   board.send([{...nativeReply, state_observed_at:undefined, last_seen:later(2)}]); await tick();
-  assert.ok(!card(board, 'native-handoff'), 'transcript catch-up never rearms the native turn already checked');
+  assert.ok(!isNew(row(board, 'native-handoff')), 'transcript catch-up never rearms the native turn already checked');
+  const newerChecked = run('checked-later', 'idle', {last_seen:later(100)});
+  const rankingBusy = run('ranking-busy', 'working');
+  board = browser(snapshot([newerChecked, rankingBusy, reading])); await tick();
+  await inspect(board, 'checked-later'); board.escape(); await tick();
+  assert.deepEqual(rows(board).map(el => el.dataset.runId), ['ranking-busy','reading','checked-later']);
+  board.send([newerChecked, {...rankingBusy, state:'idle', last_seen:later(1)}, reading]); await tick();
+  assert.deepEqual(rows(board).map(el => el.dataset.runId), ['ranking-busy','reading','checked-later'],
+    'a new reply outranks a checked reply with a newer timestamp, while running outranks checked turns');
+  await inspect(board, 'ranking-busy'); board.escape(); await tick();
+  assert.deepEqual(rows(board).map(el => el.dataset.runId), ['reading','checked-later','ranking-busy'],
+    'checking a reply restores running priority without hiding any row');
+  const contextParent = run('context-parent', 'working');
+  const inputChild = run('input-child', 'working', {parent_run_id:'context-parent'});
+  board = browser(snapshot([newerChecked, contextParent, inputChild, reading])); await tick();
+  board.send([newerChecked, contextParent, {...inputChild, state:'waiting_user', last_seen:later(1)}, reading]); await tick();
+  assert.deepEqual(rows(board).map(el => el.dataset.runId), ['context-parent','input-child','reading','checked-later'],
+    'a newly pending child raises its whole subtree ahead of ordinary work');
+  assert.ok(isNew(row(board, 'input-child')) && !isNew(row(board, 'context-parent')));
 })().catch(error => {console.error(error); process.exitCode = 1;});
 """
         result = subprocess.run(
@@ -343,7 +361,7 @@ class Element {
   querySelectorAll(selector) { const key = (selector.match(/^\[data-([a-z-]+)\]$/) || [])[1]; const prop = key ? key.replace(/-([a-z])/g, (_, c) => c.toUpperCase()) : 'focusKey'; return flatten(this).filter(x => x.dataset[prop] !== undefined); }
 }
 function flatten(el) { return el.children.filter(c => typeof c !== 'string').flatMap(c => [c, ...flatten(c)]); }
-const ids = Object.fromEntries(['connection','refresh','demo-banner','error','source-errors','counts','ai-status','harnesses','flux','overview','views','harness-filter','window-filter','window-label','search','hidden-note','runs','past-bar','zoom','flux-window','flux-note','axis','more','top-actions','keys-toggle','keys','summary-settings-open','attention','attention-title','attention-items','attention-toggle'].map(id => [id, new Element(id.endsWith('filter') ? 'select' : 'div')]));
+const ids = Object.fromEntries(['connection','refresh','demo-banner','error','source-errors','counts','ai-status','harnesses','flux','overview','views','harness-filter','window-filter','window-label','search','hidden-note','runs','past-bar','zoom','flux-window','flux-note','axis','more','top-actions','keys-toggle','keys','summary-settings-open'].map(id => [id, new Element(id.endsWith('filter') ? 'select' : 'div')]));
 const headers = Object.fromEntries(['status','agent','doing','rate','seen'].map(key => { const button = new Element('button'); button.dataset.sort = key; button.textContent = key; return [key, button]; }));
 ids['window-filter'].value = '604800000';
 ['active','waiting','all'].forEach(v => { const b = new Element('button'); b.dataset.view = v; ids.views.children.push(b); });
@@ -1089,8 +1107,6 @@ const editor = () => flatten(ids.runs).find(x => x.className === 'name-edit');
  assert.ok(rowOf('worker'));
  delegation([delegator, {...worker, state:'idle'}]);
  assert.equal(rowOf('worker'), undefined);
- // Its checked parent now belongs to the collapsed already waiting group.
- flatten(ids.runs).find(x => x.dataset.group === 'already-waiting').listeners.click(); await tick();
  rowOf('delegator').listeners.click(); await tick();
  control('rest').listeners.click(); await tick();
  assert.equal(statusText('delegator'), '☾ at rest');

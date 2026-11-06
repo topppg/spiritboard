@@ -138,18 +138,15 @@ New harnesses plug in as one module each (see [the source guide](https://github.
   | ■ **closed** | No running process owns the session any more. |
   | ✓ **done** | An SDK run reported that it finished. |
 
-- **New replies above the backlog.** A **Needs attention** strip above the table
-  shows newly finished turns and unanswered questions or approvals, with a **new**
-  marker for changes you have not checked. Hide its cards while reading and the
-  count stays visible. A new reply stays actionable until checked, even beyond
-  the normal your-turn time window. Opening a reply clears its new marker without
-  marking it **at rest**. Questions and approvals stay in the
-  strip until resolved, even after you check them. New markers and checked turns
-  are remembered in this browser across reloads.
-  On the first visit, turns already waiting form the baseline rather than all
-  appearing new. Those turns and replies you have checked gather under a folded
-  **▸ N already waiting** line in the active and needs-you views; all shows them
-  individually. Running work stays above this backlog.
+- **Spot the next reply.** A small **NEW** flag beside the agent's name marks a
+  newly finished turn or input request you have not checked. Opening its row or
+  successfully opening its terminal or app window clears the flag without
+  marking the turn **at rest**. A later turn can flag it again. Unanswered
+  questions and approvals keep their **needs you** status until resolved, even
+  after you check them. New flags and checked turns are remembered in this
+  browser across reloads. On the first visit, turns already waiting form the
+  baseline and do not all appear new. A new reply stays actionable until checked,
+  even beyond the normal your-turn time window.
 - **What each one is doing.** The session's own title (your `/rename`, the
   Claude desktop app's title, Claude's generated title, the Codex thread name, the
   opencode session title, a Pi `/name`, the Hermes session title, the DeepSeek Harness
@@ -171,13 +168,11 @@ Click a row to open it in place; `/` finds, `j`/`k` move between top-level agent
 / `e` switch between active, needs-you and all, `r` lets the open session's
 turn rest, and `o` brings the focused session's window forward. Click a table heading to sort by
 that column, click again to reverse it, and a third time to restore the default
-attention order. Except for STATUS, sorting orders within groups: busy and needs-you agents
+attention order: new turns and unanswered input requests first, running work next,
+then older your-turn sessions you have checked. Sessions stay in the main list.
+Except for STATUS, sorting orders within groups: busy and needs-you agents
 stay above ones at rest, and those above history. Open idle sessions always stay at the bottom.
 Subagents stay under their parent while sorting.
-The attention strip stays independent of table filters and sorting. Selecting one
-of its cards clears the search and harness filter, switches to active, and opens
-that session. New replies appear there while another row is open, without moving
-the row you are reading.
 Drag the edge of the STATUS or AGENT heading to widen it (arrow keys work when the
 edge is focused); the width is remembered and a double-click resets it.
 
