@@ -158,6 +158,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 32px; display: flex; fle
 .run-row.sub .status.g-needs { color: var(--wait); } .run-row.sub .status.g-failed { color: var(--err); }
 .agent-name { font-weight: 500; }
 .new-badge { flex: none; border-radius: var(--r-sm); padding: 0 5px; background: #fbbf2420; color: var(--wait); font-size: var(--fs-xs); font-weight: 600; }
+.pin-mark { flex: none; font-size: var(--fs-sm); }
 .cell.agent { display: flex; align-items: center; gap: 8px; }
 .agent .note, .agent .fold { flex: none; }
 .cell.agent > .agent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -208,8 +209,9 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 32px; display: flex; fle
 .detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; font-size: var(--fs-sm); }
 .detail-actions .app-link { display: flex; align-items: center; justify-content: center; min-height: 30px; padding: 0 12px; border-radius: var(--r-md); background: var(--run); color: var(--bg); font-weight: 600; text-decoration: none; white-space: nowrap; }
 .detail-actions .app-link:hover { background: var(--brand); color: var(--bg); }
-.detail-actions .rest-link { min-height: 30px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--r-md); color: var(--soft); font-weight: 500; text-decoration: none; white-space: nowrap; }
+.detail-actions .rest-link, .detail-actions .pin-link { min-height: 30px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--r-md); color: var(--soft); font-weight: 500; text-decoration: none; white-space: nowrap; }
 .detail-actions .rest-link:hover { border-color: var(--rest); color: var(--rest); }
+.detail-actions .pin-link:hover { border-color: var(--run); color: var(--run); }
 .resume-command { min-height: 0; padding: 2px 6px; width: 44ch; max-width: 100%; color: var(--muted); font-family: var(--mono); font-size: var(--fs-xs); }
 .detail-links { display: flex; gap: 16px; margin-left: auto; font-size: var(--fs-sm); }
 /* Separators sit in the gap and are clipped when an item starts a wrapped line. */

@@ -15,10 +15,12 @@
   const MAX_ROWS = 300;
   const REST_KEY = "spiritboard.rested";
   const ATTENTION_KEY = "spiritboard.attention";
+  const PIN_KEY = "spiritboard.pinned";
   const WIDTH_KEY = "spiritboard.columns";
   const KIND_NAMES = { codex: "Codex", claude: "Claude", opencode: "opencode", pi: "Pi", hermes: "Hermes", dsh: "DeepSeek Harness", grokbot: "Grok Bot" };
   const state = { snapshot: null, selected: null, view: "active", sort: null, descending: false, order: [], frozen: new Map(), split: 0, colors: new Map(), events: [], nextCursor: 0, more: false, eventBusy: false, request: 0, fetching: false, live: false, lastSnapshotAt: 0, fingerprint: null, historyOpen: false, tableKey: "", target: null, targetNote: "", targetFallback: false, latest: null, past: null, pastRequest: 0, zoom: 600, chart: null, chartAt: 0, rested: loadRested(), editing: null, draft: "", folds: new Map(), openTargets: new Map(), openFlashes: new Map() };
   state.attention = loadAttention();
+  state.pinned = loadPins();
   // Chart windows in seconds: heading, then the left and middle axis labels.
   const ZOOMS = { 600: ["last 10 minutes", "-10m", "-5m"], 3600: ["last hour", "-1h", "-30m"], 86400: ["last 24 hours", "-24h", "-12h"],
     604800: ["last 7 days", "-7d", "-3.5d"], 2592000: ["last 30 days", "-30d", "-15d"] };
@@ -81,6 +83,24 @@
     return "Transcript only · unrecorded questions or approvals may be missed";
   }
   const observedAt = (run) => run.state_observed_at || run.last_seen;
+  function loadPins() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PIN_KEY));
+      if (typeof saved?.stream === "string" && Array.isArray(saved.ids)) return { stream: saved.stream, ids: new Set(saved.ids.filter((id) => typeof id === "string")) };
+    } catch (_) { /* pins work without browser storage */ }
+    return { stream: null, ids: new Set() };
+  }
+  function savePins() {
+    try { localStorage.setItem(PIN_KEY, JSON.stringify({ stream: state.pinned.stream, ids: [...state.pinned.ids] })); } catch (_) { /* pins work without browser storage */ }
+  }
+  function isPinned(run) { return !state.past && state.pinned.ids.has(run.run_id); }
+  function togglePin(run) {
+    if (state.past) return;
+    if (isPinned(run)) state.pinned.ids.delete(run.run_id); else state.pinned.ids.add(run.run_id);
+    savePins();
+    // An explicit pin change reorders once, then live updates keep the new order still.
+    state.frozen.clear(); renderTable();
+  }
   function loadAttention() {
     try {
       const saved = JSON.parse(localStorage.getItem(ATTENTION_KEY));
@@ -265,6 +285,9 @@
     if (!snapshot || !Array.isArray(snapshot.runs)) throw new Error("Invalid dashboard snapshot.");
     state.latest = snapshot;
     state.lastSnapshotAt = Date.now();
+    if (state.pinned.stream !== snapshot.stream_id) {
+      state.pinned = { stream: snapshot.stream_id, ids: new Set() }; savePins();
+    }
     reconcileAttention(snapshot);
     if (state.zoom !== 600 && Date.now() - state.chartAt > 10000) loadChart();
     // The past board stays still; only the chart follows live updates.
@@ -530,7 +553,7 @@
   function tableKey() {
     return JSON.stringify([state.fingerprint, activity().end && Math.floor(time(activity().end) / 10000), state.view,
       $("harness-filter").value, $("window-filter").value, $("search").value, state.sort, state.descending, state.selected, state.historyOpen,
-      state.events.length, state.eventBusy, state.more, state.target, state.targetNote, state.targetFallback, [...state.rested], state.attention, Math.floor(serverNow() / 60000)]);
+      state.events.length, state.eventBusy, state.more, state.target, state.targetNote, state.targetFallback, [...state.rested], state.attention, [...state.pinned.ids], Math.floor(serverNow() / 60000)]);
   }
   function seenText(value) {
     const seen = time(value);
@@ -555,10 +578,10 @@
     const ranks = new Map();
     const rank = (run, path = new Set()) => {
       if (ranks.has(run.run_id)) return ranks.get(run.run_id);
-      const value = { rank: workRank(run), seen: time(observedAt(run)) || 0 };
+      const value = { rank: workRank(run), seen: time(observedAt(run)) || 0, pinned: isPinned(run) };
       if (path.has(run.run_id)) return value;
       const next = new Set(path); next.add(run.run_id);
-      (children.get(run.run_id) || []).filter((c) => visible.has(c.run_id)).forEach((c) => { const b = rank(c, next); value.rank = Math.min(value.rank, b.rank); value.seen = Math.max(value.seen, b.seen); });
+      (children.get(run.run_id) || []).filter((c) => visible.has(c.run_id)).forEach((c) => { const b = rank(c, next); value.rank = Math.min(value.rank, b.rank); value.seen = Math.max(value.seen, b.seen); value.pinned ||= b.pinned; });
       ranks.set(run.run_id, value); return value;
     };
     const live = (a, b) => rank(a).rank - rank(b).rank || rank(b).seen - rank(a).seen || a.run_id.localeCompare(b.run_id);
@@ -573,7 +596,8 @@
       const order = typeof left === "number" ? left - right : left.localeCompare(right);
       return (state.descending ? -order : order) || a.run_id.localeCompare(b.run_id);
     };
-    const compare = state.sort ? sorted : state.selected ? (a, b) => frozen(a) - frozen(b) || live(a, b) : live;
+    const withinPins = state.sort ? sorted : state.selected ? (a, b) => frozen(a) - frozen(b) || live(a, b) : live;
+    const compare = (a, b) => Number(rank(b).pinned) - Number(rank(a).pinned) || withinPins(a, b);
     renderHiddenNote(runs, direct);
     state.order = [];
     if (!runs.length) { host.append(node("p", "No agents yet. Start the synthetic demo or configure a local source profile. This dashboard never starts agents.", "empty")); return; }
@@ -593,7 +617,7 @@
       const inView = all.filter((c) => visible.has(c.run_id));
       // A finished turn, idle or quiet session folds settled subagents unless it is only context for them.
       const status = statusOf(run);
-      const settled = (status.turn || ["idle", "quiet", "rest"].includes(status.key)) && inView.every((c) => rank(c).rank >= 3)
+      const settled = (status.turn || ["idle", "quiet", "rest"].includes(status.key)) && inView.every((c) => rank(c).rank >= 3 && !rank(c).pinned)
         && direct.has(run.run_id);
       // Your choice wins: true folds them all, false shows them all, even ones outside this view.
       const choice = state.folds.get(run.run_id);
@@ -609,7 +633,7 @@
     // Open idle sessions with nothing busy below them gather under one line at the bottom, folded unless one is opened.
     // While a row is open, sessions listed above that line stay there, so the open row never jumps.
     const openIdle = roots.filter((r) => visible.has(r.run_id) && statusOf(r).key === "idle" && r.live === true
-      && rank(r).rank >= 3 && !(state.selected && frozen(r) < state.split));
+      && rank(r).rank >= 3 && !rank(r).pinned && !(state.selected && frozen(r) < state.split));
     const groupFolded = (state.folds.get(OPEN_IDLE) ?? true) && !openIdle.some((r) => r.run_id === state.selected || openPath.has(r.run_id));
     roots.filter((r) => !openIdle.includes(r)).forEach(renderRoot);
     const split = state.order.length;
@@ -620,7 +644,7 @@
       host.append(groupRow(openIdle.length, groupFolded));
       if (!groupFolded) openIdle.forEach(renderRoot);
     }
-    if (!state.selected) { state.frozen = new Map(state.order.map((id, i) => [id, i])); state.split = split; }
+    if (!state.selected || !state.frozen.size) { state.frozen = new Map(state.order.map((id, i) => [id, i])); state.split = split; }
     if (focused) [...host.querySelectorAll("[data-focus-key]")].find((el) => el.dataset.focusKey === focused)?.focus({ preventScroll: true });
   }
   function groupRow(count, folded) {
@@ -655,6 +679,10 @@
     const name = node("span", nameOf(run), "agent-name");
     name.title = titleNote(run) ? `${where} · ${titleNote(run)}` : where;
     agent.append(name, node("span", where, "sr-only"));
+    if (isPinned(run)) {
+      const pin = node("span", "📌", "pin-mark"); pin.title = "Pinned to top";
+      pin.setAttribute("role", "img"); pin.setAttribute("aria-label", "Pinned"); agent.append(pin);
+    }
     if (!state.past && status.key === "needs" && isNew(run)) agent.append(node("span", "new", "new-badge"));
     if (run.local_name) {
       const mark = node("span", "✎", "renamed-mark"); mark.title = "Renamed by you in Spiritboard";
@@ -844,6 +872,11 @@
     } else if (aiTitleOf(run) && run.ai_summary?.previous_title) title.append(node("span", `was: ${run.ai_summary.previous_title}`, "was"));
     const actions = node("div", null, "detail-actions");
     actions.append(...targetControls(run));
+    if (!state.past) {
+      const pin = node("button", isPinned(run) ? "Unpin" : "Pin to top", "link pin-link"); pin.type = "button"; pin.dataset.focusKey = "pin";
+      pin.setAttribute("aria-pressed", String(isPinned(run)));
+      pin.addEventListener("click", () => togglePin(run)); actions.append(pin);
+    }
     if (status.turn && !state.past) {
       const rest = node("button", status.key === "rest" ? "◐ back to your turn" : "☾ let it rest", "link rest-link"); rest.type = "button"; rest.dataset.focusKey = "rest";
       rest.addEventListener("click", () => toggleRest(run));

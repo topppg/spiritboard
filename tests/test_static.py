@@ -10,6 +10,99 @@ from pathlib import Path
 STATIC = Path(__file__).resolve().parents[1] / "src" / "spiritboard" / "static"
 
 
+BROWSER_HARNESS = r"""
+const fs = require('fs'), vm = require('vm'), assert = require('assert');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const flatten = el => el.children.filter(c => typeof c !== 'string').flatMap(c => [c, ...flatten(c)]);
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const stored = {};
+const now = new Date().toISOString();
+const later = seconds => new Date(Date.parse(now) + seconds * 1000).toISOString();
+const run = (id, state, extra = {}) => ({run_id:id, parent_run_id:null, name:id, mode:'observation',
+  session_id:'synthetic:observed', source:'codex', account:'synthetic', state, live:true,
+  health:'observed', inferred:true, task:'Synthetic task', activity:'Synthetic reply',
+  last_seen:now, started_at:now, operations:[], ...extra});
+const snapshot = runs => ({stream_id:'attention-test', cursor:1, server_time:now, runs,
+  profiles:[], source_errors:{}, ai:{enabled:false}, stale_after_seconds:15,
+  activity:{bucket_seconds:10, buckets:60, end:now, runs:{busy:new Array(60).fill(1)}}});
+function browser(initial, past) {
+  let document, stream;
+  class Element {
+    constructor(tag) {
+      this.tagName = tag; this.children = []; this.dataset = {}; this.listeners = {}; this.attrs = {};
+      this.value = ''; this.hidden = false; this._text = ''; this.options = [];
+      this.style = {setProperty(k,v) {this[k] = v;}, removeProperty(k) {delete this[k];}};
+      this.classList = {toggle:(name, force) => {
+        const classes = new Set((this.className || '').split(' ').filter(Boolean));
+        const enabled = force ?? !classes.has(name);
+        if (enabled) classes.add(name); else classes.delete(name);
+        this.className = [...classes].join(' ');
+      }};
+    }
+    set textContent(value) {this._text = String(value); this.children = [];}
+    get textContent() {return this._text + this.children.map(c => typeof c === 'string' ? c : c.textContent).join('');}
+    append(...items) {this.children.push(...items);}
+    insertBefore(item, reference) {this.children.splice(reference ? this.children.indexOf(reference) : this.children.length, 0, item);}
+    replaceChildren(...items) {this.children = items; this._text = ''; this.options = [...items];}
+    setAttribute(key, value) {this.attrs[key] = value;}
+    getAttribute(key) {return this.attrs[key];}
+    addEventListener(key, fn) {this.listeners[key] = fn;}
+    focus() {document.activeElement = this;}
+    blur() {}
+    scrollIntoView() {}
+    querySelectorAll(selector) {
+      const key = (selector.match(/^\[data-([a-z-]+)\]$/) || [])[1];
+      const prop = key ? key.replace(/-([a-z])/g, (_, c) => c.toUpperCase()) : 'focusKey';
+      return flatten(this).filter(el => el.dataset[prop] !== undefined);
+    }
+  }
+  const ids = {};
+  const element = id => ids[id] ||= new Element(id.endsWith('filter') ? 'select' : 'div');
+  ['active','waiting','all'].forEach(view => {
+    const button = new Element('button'); button.dataset.view = view; element('views').append(button);
+  });
+  element('window-filter').value = '604800000';
+  const headers = Object.fromEntries(['agent','status','seen','rate','doing'].map(key => {
+    const button = new Element('button'); button.dataset.sort = key; button.textContent = key; return [key, button];
+  }));
+  const listeners = {};
+  document = {getElementById:element, createElement:tag => new Element(tag), querySelectorAll:selector => selector === '[data-sort]' ? Object.values(headers) : [],
+    activeElement:null, addEventListener:(key, fn) => {listeners[key] = fn;}};
+  class Option extends Element {constructor(text,value) {super('option'); this.textContent = text; this.value = value;}}
+  class EventSource {constructor() {stream = this; this.listeners = {};} addEventListener(key, fn) {this.listeners[key] = fn;}}
+  const requests = [], posts = [];
+  let focusStatus = 200, focusHold = null;
+  const context = {document, Option, EventSource, console, setInterval:() => {}, setTimeout:() => {},
+    localStorage:{getItem:key => stored[key] ?? null, setItem:(key,value) => {stored[key] = value;}},
+    fetch:async (url, options = {}) => {
+      requests.push(url);
+      if (options.method === 'POST') {
+        posts.push({url, headers:options.headers});
+        if (focusHold) await focusHold;
+        return {ok:focusStatus === 200, status:focusStatus};
+      }
+      const data = url.startsWith('/api/snapshot?at=') ? past : url.endsWith('/focus') ? {available:true, kind:'focus', label:'Synthetic terminal'} :
+        url.startsWith('/api/runs/') ? {events:[], next_cursor:0, has_more:false} : initial;
+      return {ok:true, json:async () => data};
+    }};
+  vm.runInNewContext(source, context);
+  return {ids, headers, requests, posts, focusResult:status => {focusStatus = status;}, holdFocus:promise => {focusHold = promise;},
+    send:(runs, extra = {}) => stream.listeners.snapshot({data:JSON.stringify({...snapshot(runs), ...extra})}),
+    escape:() => listeners.keydown({key:'Escape', target:{tagName:'BODY'}, preventDefault(){}})};
+}
+const rows = board => board.ids.runs.children.filter(el => el.dataset.runId);
+const row = (board, id) => rows(board).find(el => el.dataset.runId === id);
+const isNew = el => el && flatten(el).some(child => (child.className || '').split(' ').includes('new-badge'));
+const inspect = async (board, id) => {
+  assert.ok(row(board, id), `session ${id} stays available in its existing row`);
+  if (row(board, id).attrs['aria-expanded'] === 'true') {
+    row(board, id).listeners.click(); await tick();
+  }
+  row(board, id).listeners.click(); await tick();
+};
+"""
+
+
 class Assets(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -102,93 +195,9 @@ class StaticTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node"), "Node is optional; browser syntax/DOM check skipped")
     def test_new_flags_track_turns_in_existing_rows_without_changing_the_board_layout(self):
-        script = r"""
-const fs = require('fs'), vm = require('vm'), assert = require('assert');
-const source = fs.readFileSync(process.argv[1], 'utf8');
-const flatten = el => el.children.filter(c => typeof c !== 'string').flatMap(c => [c, ...flatten(c)]);
-const tick = () => new Promise(resolve => setImmediate(resolve));
-const stored = {};
-const now = new Date().toISOString();
-const later = seconds => new Date(Date.parse(now) + seconds * 1000).toISOString();
-const run = (id, state, extra = {}) => ({run_id:id, parent_run_id:null, name:id, mode:'observation',
-  session_id:'synthetic:observed', source:'codex', account:'synthetic', state, live:true,
-  health:'observed', inferred:true, task:'Synthetic task', activity:'Synthetic reply',
-  last_seen:now, started_at:now, operations:[], ...extra});
-const snapshot = runs => ({stream_id:'attention-test', cursor:1, server_time:now, runs,
-  profiles:[], source_errors:{}, ai:{enabled:false}, stale_after_seconds:15,
-  activity:{bucket_seconds:10, buckets:60, end:now, runs:{busy:new Array(60).fill(1)}}});
-function browser(initial, past) {
-  let document, stream;
-  class Element {
-    constructor(tag) {
-      this.tagName = tag; this.children = []; this.dataset = {}; this.listeners = {}; this.attrs = {};
-      this.value = ''; this.hidden = false; this._text = ''; this.options = [];
-      this.style = {setProperty(k,v) {this[k] = v;}, removeProperty(k) {delete this[k];}};
-      this.classList = {toggle:(name, force) => {
-        const classes = new Set((this.className || '').split(' ').filter(Boolean));
-        const enabled = force ?? !classes.has(name);
-        if (enabled) classes.add(name); else classes.delete(name);
-        this.className = [...classes].join(' ');
-      }};
-    }
-    set textContent(value) {this._text = String(value); this.children = [];}
-    get textContent() {return this._text + this.children.map(c => typeof c === 'string' ? c : c.textContent).join('');}
-    append(...items) {this.children.push(...items);}
-    insertBefore(item, reference) {this.children.splice(reference ? this.children.indexOf(reference) : this.children.length, 0, item);}
-    replaceChildren(...items) {this.children = items; this._text = ''; this.options = [...items];}
-    setAttribute(key, value) {this.attrs[key] = value;}
-    getAttribute(key) {return this.attrs[key];}
-    addEventListener(key, fn) {this.listeners[key] = fn;}
-    focus() {document.activeElement = this;}
-    blur() {}
-    scrollIntoView() {}
-    querySelectorAll(selector) {
-      const key = (selector.match(/^\[data-([a-z-]+)\]$/) || [])[1];
-      const prop = key ? key.replace(/-([a-z])/g, (_, c) => c.toUpperCase()) : 'focusKey';
-      return flatten(this).filter(el => el.dataset[prop] !== undefined);
-    }
-  }
-  const ids = {};
-  const element = id => ids[id] ||= new Element(id.endsWith('filter') ? 'select' : 'div');
-  ['active','waiting','all'].forEach(view => {
-    const button = new Element('button'); button.dataset.view = view; element('views').append(button);
-  });
-  element('window-filter').value = '604800000';
-  const listeners = {};
-  document = {getElementById:element, createElement:tag => new Element(tag), querySelectorAll:() => [],
-    activeElement:null, addEventListener:(key, fn) => {listeners[key] = fn;}};
-  class Option extends Element {constructor(text,value) {super('option'); this.textContent = text; this.value = value;}}
-  class EventSource {constructor() {stream = this; this.listeners = {};} addEventListener(key, fn) {this.listeners[key] = fn;}}
-  const requests = [], posts = [];
-  let focusStatus = 200, focusHold = null;
-  const context = {document, Option, EventSource, console, setInterval:() => {}, setTimeout:() => {},
-    localStorage:{getItem:key => stored[key] ?? null, setItem:(key,value) => {stored[key] = value;}},
-    fetch:async (url, options = {}) => {
-      requests.push(url);
-      if (options.method === 'POST') {
-        posts.push({url, headers:options.headers});
-        if (focusHold) await focusHold;
-        return {ok:focusStatus === 200, status:focusStatus};
-      }
-      const data = url.startsWith('/api/snapshot?at=') ? past : url.endsWith('/focus') ? {available:true, kind:'focus', label:'Synthetic terminal'} :
-        url.startsWith('/api/runs/') ? {events:[], next_cursor:0, has_more:false} : initial;
-      return {ok:true, json:async () => data};
-    }};
-  vm.runInNewContext(source, context);
-  return {ids, requests, posts, focusResult:status => {focusStatus = status;}, holdFocus:promise => {focusHold = promise;},
-    send:(runs, extra = {}) => stream.listeners.snapshot({data:JSON.stringify({...snapshot(runs), ...extra})}),
-    escape:() => listeners.keydown({key:'Escape', target:{tagName:'BODY'}, preventDefault(){}})};
-}
-const rows = board => board.ids.runs.children.filter(el => el.dataset.runId);
-const row = (board, id) => rows(board).find(el => el.dataset.runId === id);
-const isNew = el => el && flatten(el).some(child => (child.className || '').split(' ').includes('new-badge'));
-const inspect = async (board, id) => {
-  assert.ok(row(board, id), `session ${id} stays available in its existing row`);
-  if (row(board, id).attrs['aria-expanded'] === 'true') {
-    row(board, id).listeners.click(); await tick();
-  }
-  row(board, id).listeners.click(); await tick();
-};
+        script = (
+            BROWSER_HARNESS
+            + r"""
 (async () => {
   const idle = run('longstanding', 'idle');
   const busy = run('busy', 'working');
@@ -334,6 +343,178 @@ const inspect = async (board, id) => {
   assert.ok(isNew(row(board, 'input-child')) && !isNew(row(board, 'context-parent')));
 })().catch(error => {console.error(error); process.exitCode = 1;});
 """
+        )
+        result = subprocess.run(
+            [shutil.which("node"), "-e", script, str(STATIC / "app.js")],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(shutil.which("node"), "Node is optional; browser syntax/DOM check skipped")
+    def test_pins_persist_and_override_sorting_without_changing_turn_attention(self):
+        script = (
+            BROWSER_HARNESS
+            + r"""
+const order = board => rows(board).map(el => el.dataset.runId);
+const pinAction = board => flatten(board.ids.runs).find(el => el.dataset.focusKey === 'pin');
+const pinned = (board, id) => flatten(row(board, id)).find(el => (el.className || '').split(' ').includes('pin-mark'));
+const togglePin = async board => {
+  assert.ok(pinAction(board), 'the existing detail panel offers a pin action');
+  pinAction(board).listeners.click({stopPropagation(){}}); await tick();
+};
+(async () => {
+  const alpha = run('alpha', 'working', {last_seen:later(3)});
+  const beta = run('beta', 'working', {last_seen:later(2)});
+  const zebra = run('zebra', 'working', {last_seen:later(1)});
+  let current = [alpha, beta, zebra];
+  let board = browser(snapshot(current)); await tick();
+  assert.deepEqual(order(board), ['alpha','beta','zebra']);
+  await inspect(board, 'zebra');
+  assert.ok(pinAction(board), 'the existing detail panel offers a pin action');
+  assert.equal(pinAction(board).textContent, 'Pin to top');
+  assert.equal(pinAction(board).attrs['aria-pressed'], 'false');
+  await togglePin(board);
+  assert.deepEqual(order(board), ['zebra','alpha','beta'], 'pinning moves the selected row immediately');
+  assert.equal(pinAction(board).textContent, 'Unpin');
+  assert.equal(pinAction(board).attrs['aria-pressed'], 'true');
+  assert.equal(pinned(board, 'zebra').attrs['aria-label'], 'Pinned');
+  await togglePin(board);
+  assert.deepEqual(order(board), ['alpha','beta','zebra'], 'unpinning immediately restores ordinary ordering');
+  assert.ok(!pinned(board, 'zebra'));
+  await togglePin(board);
+  current = [alpha, {...beta, last_seen:later(10)}, zebra];
+  board.send(current); await tick();
+  assert.deepEqual(order(board), ['zebra','alpha','beta'], 'live updates freeze the order established by pinning while reading');
+  board.escape(); await tick();
+  assert.deepEqual(order(board), ['zebra','beta','alpha'], 'closing details resumes normal ordering within the unpinned tier');
+  board = browser(snapshot(current)); await tick();
+  assert.deepEqual(order(board), ['zebra','beta','alpha'], 'pins survive a full page reload');
+  assert.ok(pinned(board, 'zebra'));
+  for (const sort of ['agent','status','seen','rate']) {
+    board.headers[sort].listeners.click(); await tick();
+    assert.equal(order(board)[0], 'zebra', `a pin outranks ${sort} sorting`);
+    board.headers[sort].listeners.click(); await tick();
+    assert.equal(order(board)[0], 'zebra', `a pin outranks reversed ${sort} sorting`);
+    board.headers[sort].listeners.click(); await tick();
+  }
+  await inspect(board, 'alpha'); await togglePin(board);
+  board.escape(); await tick();
+  assert.deepEqual(order(board), ['alpha','zebra','beta'], 'multiple pins retain ordinary ordering within their tier');
+  board.headers.agent.listeners.click(); board.headers.agent.listeners.click(); await tick();
+  assert.deepEqual(order(board), ['zebra','alpha','beta'], 'descending name order also applies within the pin tier');
+  board.headers.agent.listeners.click(); await tick();
+  await inspect(board, 'alpha'); await togglePin(board); board.escape(); await tick();
+  board.ids.search.value = 'beta'; board.ids.search.listeners.input(); await tick();
+  assert.deepEqual(order(board), ['beta'], 'pins respect the search filter');
+  board.ids.search.value = ''; board.ids.search.listeners.input(); await tick();
+  assert.equal(order(board)[0], 'zebra');
+  await inspect(board, 'zebra');
+  const replied = {...zebra, state:'idle', last_seen:later(11)};
+  current = [alpha, beta, replied]; board.send(current); await tick();
+  assert.ok(isNew(row(board, 'zebra')), 'a pinned agent still flags its next completed turn');
+  await togglePin(board);
+  assert.ok(isNew(row(board, 'zebra')), 'unpinning never checks a newly arrived reply');
+  await togglePin(board);
+  assert.ok(isNew(row(board, 'zebra')), 'pinning never checks a newly arrived reply');
+  assert.ok(row(board, 'zebra').textContent.includes('your turn'));
+  assert.ok(!row(board, 'zebra').textContent.includes('at rest'));
+  assert.deepEqual(board.posts, [], 'pinning is local and never opens or changes an agent');
+  board = browser(snapshot(current)); await tick();
+  assert.equal(order(board)[0], 'zebra', 'pins survive state transitions and reload');
+  assert.ok(isNew(row(board, 'zebra')));
+  await inspect(board, 'zebra');
+  assert.ok(!isNew(row(board, 'zebra')), 'opening a pinned reply still acknowledges it normally');
+  await togglePin(board);
+  assert.deepEqual(order(board), ['alpha','beta','zebra'], 'unpinning an open checked reply restores its ordinary work tier');
+  board = browser(snapshot(current)); await tick();
+  assert.ok(!pinned(board, 'zebra'), 'unpinning survives reload');
+})().catch(error => {console.error(error); process.exitCode = 1;});
+"""
+        )
+        result = subprocess.run(
+            [shutil.which("node"), "-e", script, str(STATIC / "app.js")],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(shutil.which("node"), "Node is optional; browser syntax/DOM check skipped")
+    def test_pins_preserve_trees_idle_visibility_and_live_journal_boundaries(self):
+        script = (
+            BROWSER_HARNESS
+            + r"""
+const order = board => rows(board).map(el => el.dataset.runId);
+const pinAction = board => flatten(board.ids.runs).find(el => el.dataset.focusKey === 'pin');
+const pinned = (board, id) => flatten(row(board, id)).some(el => (el.className || '').split(' ').includes('pin-mark'));
+const togglePin = async board => {
+  assert.ok(pinAction(board), 'the detail panel offers a pin action');
+  pinAction(board).listeners.click({stopPropagation(){}}); await tick();
+};
+const idleGroup = board => flatten(board.ids.runs).find(el => el.className === 'group-row');
+(async () => {
+  const ordinary = run('ordinary', 'waiting_user', {name:'A ordinary'});
+  const parent = run('parent', 'working', {name:'Z parent'});
+  const child = run('child', 'working', {parent_run_id:'parent'});
+  let current = [ordinary, parent, child];
+  let board = browser(snapshot(current)); await tick();
+  assert.deepEqual(order(board), ['ordinary','parent','child']);
+  await inspect(board, 'child'); await togglePin(board);
+  assert.deepEqual(order(board), ['parent','child','ordinary'], 'pinning a child raises its intact parent tree');
+  assert.ok(pinned(board, 'child') && !pinned(board, 'parent'), 'only the explicitly pinned child has a marker');
+  board.escape(); await tick();
+  board.headers.agent.listeners.click(); await tick();
+  assert.deepEqual(order(board), ['parent','child','ordinary'], 'column sorting preserves pinned descendant trees');
+  board.ids.search.value = 'ordinary'; board.ids.search.listeners.input(); await tick();
+  assert.deepEqual(order(board), ['ordinary'], 'pinning does not expose trees excluded by filters');
+  board.ids.search.value = ''; board.ids.search.listeners.input(); await tick();
+  board = browser(snapshot(current)); await tick();
+  assert.deepEqual(order(board), ['parent','child','ordinary'], 'a pinned child retains its tree after reload');
+  const settled = [ordinary, {...parent, state:'idle', last_seen:later(-13 * 3600)},
+    {...child, state:'idle', last_seen:later(-13 * 3600)}];
+  board.send(settled); await tick();
+  board = browser(snapshot(settled)); await tick();
+  assert.deepEqual(order(board), ['parent','child','ordinary'], 'a settled pinned child remains visible in its parent tree after reload');
+  assert.ok(pinned(board, 'child') && !pinned(board, 'parent'));
+  const liveForHistory = {...snapshot(current), activity:{...snapshot(current).activity, runs:{parent:new Array(60).fill(1)}}};
+  const historical = {...liveForHistory, at:later(-290), server_time:later(-290)};
+  board = browser(liveForHistory, historical); await tick();
+  const beforeHistory = JSON.stringify(stored);
+  board.ids.flux.children.filter(el => el.className === 'col')[30].listeners.click(); await tick();
+  assert.deepEqual(order(board), ['ordinary','parent','child'], 'pins do not reorder historical snapshots');
+  assert.ok(!pinned(board, 'child'), 'history hides live pin markers');
+  await inspect(board, 'child');
+  assert.equal(pinAction(board), undefined, 'history cannot edit live pins');
+  assert.equal(JSON.stringify(stored), beforeHistory, 'viewing history never mutates saved pins or turn checks');
+  flatten(board.ids['past-bar']).find(el => el.tagName === 'button').listeners.click(); await tick();
+  assert.deepEqual(order(board), ['parent','child','ordinary']);
+  assert.ok(pinned(board, 'child'), 'returning live restores the pin');
+  const idle = run('idle', 'idle', {last_seen:later(-13 * 3600)});
+  current = [ordinary, idle]; board = browser(snapshot(current)); await tick();
+  assert.ok(!row(board, 'idle') && idleGroup(board), 'old open sessions normally remain folded');
+  idleGroup(board).listeners.click(); await tick();
+  await inspect(board, 'idle'); await togglePin(board); board.escape(); await tick();
+  board = browser(snapshot(current)); await tick();
+  assert.equal(order(board)[0], 'idle', 'a pinned idle root stays above work outside the folded idle group');
+  assert.ok(pinned(board, 'idle') && !idleGroup(board));
+  const many = Array.from({length:305}, (_, i) => run(`busy-${i}`, 'working'));
+  board.send([...many, idle]); await tick();
+  assert.equal(order(board)[0], 'idle', 'the 300-row display cap keeps pinned agents at the front');
+  assert.equal(rows(board).length, 300);
+  board = browser(snapshot([ordinary, idle])); await tick();
+  await inspect(board, 'idle'); await togglePin(board); board.escape(); await tick();
+  board = browser(snapshot([ordinary, idle])); await tick();
+  assert.ok(!row(board, 'idle') && idleGroup(board), 'unpinning restores the folded idle group');
+  await inspect(board, 'ordinary'); await togglePin(board); board.escape(); await tick();
+  board.send([ordinary, idle], {stream_id:'replacement-journal'}); await tick();
+  assert.ok(!pinned(board, 'ordinary'), 'a replacement journal never inherits pins from reused run identifiers');
+  board = browser({...snapshot([ordinary, idle]), stream_id:'replacement-journal'}); await tick();
+  assert.ok(!pinned(board, 'ordinary'), 'journal isolation also survives a reload');
+})().catch(error => {console.error(error); process.exitCode = 1;});
+"""
+        )
         result = subprocess.run(
             [shutil.which("node"), "-e", script, str(STATIC / "app.js")],
             capture_output=True,
