@@ -260,7 +260,7 @@ class PiTests(unittest.TestCase):
 
         with (
             patch.object(processes, "run", system()),
-            patch.object(pi.shutil, "which", return_value="/usr/sbin/lsof"),
+            patch.object(processes, "lsof", return_value="/usr/sbin/lsof"),
         ):
             self.assertEqual(pi.pi_processes(), {101: CWD, 102: "/invented/elsewhere"})
             self.assertEqual(pi.live_sessions(self.root), frozenset({SESSION_ID}))
@@ -272,7 +272,7 @@ class PiTests(unittest.TestCase):
         two = (0, f"p101\nfcwd\nn{CWD}\np102\nfcwd\nn{CWD}\n")
         with (
             patch.object(processes, "run", system(answer_lsof=two)),
-            patch.object(pi.shutil, "which", return_value="/usr/sbin/lsof"),
+            patch.object(processes, "lsof", return_value="/usr/sbin/lsof"),
         ):
             self.assertEqual(pi.session_pid(self.root, SESSION_ID), (False, None))
         with patch.object(processes, "run", system(answer_ps=(0, "  7 zsh\n"))):
@@ -286,7 +286,7 @@ class PiTests(unittest.TestCase):
             self.assertEqual(pi.session_pid(self.root, SESSION_ID), (False, None))
         with (
             patch.object(processes, "run", system()),
-            patch.object(pi.shutil, "which", return_value=None),
+            patch.object(processes, "lsof", return_value=None),
         ):
             self.assertIsNone(pi.live_sessions(self.root))
 

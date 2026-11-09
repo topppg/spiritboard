@@ -484,7 +484,7 @@ def titles(root: Path) -> dict[str, str]:
 
 def _holders(locks: list[str]) -> list[tuple[int, str, str]] | None:
     """(pid, command, lock path) for each process holding a lock; None when lsof fails."""
-    lsof = shutil.which("lsof")
+    lsof = processes.lsof()
     if not lsof:
         return None
     result = processes.run([lsof, "-F", "pcn", "--", *locks])

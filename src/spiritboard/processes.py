@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 
 TIMEOUT = 3.0
@@ -24,6 +26,17 @@ class Process:
     tty: str
     start: str
     command: str
+
+
+def lsof() -> str | None:
+    """Find lsof even when a Mac login service omits system administration tools."""
+    selected = shutil.which("lsof")
+    if selected:
+        return selected
+    system = "/usr/sbin/lsof"
+    if sys.platform == "darwin" and os.path.isfile(system) and os.access(system, os.X_OK):
+        return system
+    return None
 
 
 def run(argv: list[str], env: dict[str, str] | None = None) -> tuple[int, str] | None:

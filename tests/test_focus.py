@@ -198,7 +198,7 @@ class CodexResolutionTests(unittest.TestCase):
             with patch.object(processes, "run", FakeSystem(lsof=(1, ""))):
                 gone = self.rollout.with_name("gone.jsonl")
                 self.assertEqual(codex.rollout_pid(self.root, gone), (False, None))
-        with patch.object(focus.shutil, "which", return_value=None):
+        with patch.object(processes, "lsof", return_value=None):
             self.assertEqual(codex.rollout_pid(self.root, self.rollout), (False, None))
         archived = self.root / "archived_sessions" / self.rollout.name
         archived.parent.mkdir()
@@ -207,6 +207,26 @@ class CodexResolutionTests(unittest.TestCase):
 
 
 class EnvironmentTests(unittest.TestCase):
+    def test_cmux_surface_id_is_validated(self) -> None:
+        for value, expected in (
+            ("SURFACE-1234", {"CMUX_SURFACE_ID": "SURFACE-1234"}),
+            ("--invalid", {}),
+            ("invalid/path", {}),
+        ):
+            with (
+                self.subTest(value=value),
+                patch.object(focus.sys, "platform", "darwin"),
+                patch.object(
+                    processes,
+                    "run",
+                    FakeSystem(
+                        env_output=f"/usr/bin/codex CMUX_SURFACE_ID={value}",
+                        args_output="/usr/bin/codex",
+                    ),
+                ),
+            ):
+                self.assertEqual(focus._environment(1), expected)
+
     def test_only_selected_valid_keys_and_last_occurrence(self):
         args = "/usr/bin/claude --flag TMUX_PANE=%9 __CFBundleIdentifier=com.invented.app"
         output = (
@@ -257,6 +277,20 @@ class AdapterTests(unittest.TestCase):
         self.assertFalse(any(s.required for s in target.steps[2:]))
         self.assertEqual(target.env, (("CMUX_SOCKET_PATH", "/tmp/cmux.sock"),))
         self.assertEqual(target.public(), {"available": True, "kind": "focus", "label": "cmux"})
+
+    def test_cmux_surface_without_legacy_panel_id(self) -> None:
+        target = self.pick({"CMUX_WORKSPACE_ID": "WS-1", "CMUX_SURFACE_ID": "SURFACE-1"})
+        self.assertEqual(target.label, "cmux")
+        self.assertEqual(
+            target.steps[1].argv,
+            ("/cmux", "focus-panel", "--panel", "SURFACE-1", "--workspace", "WS-1"),
+        )
+
+    def test_cmux_surface_takes_precedence_over_panel_alias(self) -> None:
+        target = self.pick(
+            {"CMUX_WORKSPACE_ID": "WS-1", "CMUX_SURFACE_ID": "CURRENT-1", "CMUX_PANEL_ID": "OLD-1"}
+        )
+        self.assertEqual(target.steps[1].argv[3], "CURRENT-1")
 
     def test_tmux_pane_then_terminal_app(self):
         env = {
@@ -576,7 +610,7 @@ class LivenessTests(unittest.TestCase):
             self.assertEqual(live, frozenset({"01a1aaaa-0000-7000-8000-000000000001"}))
             with patch.object(processes, "run", return_value=(1, "")):
                 self.assertEqual(focus.live_sessions(profile), frozenset())
-        with patch.object(focus.shutil, "which", return_value=None):
+        with patch.object(processes, "lsof", return_value=None):
             self.assertIsNone(focus.live_sessions(profile))
         older = SourceProfile("codex-old", "codex", "Old", str(self.base / "no-locks"))
         self.assertIsNone(focus.live_sessions(older))

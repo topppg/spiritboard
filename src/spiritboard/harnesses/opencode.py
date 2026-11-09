@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import sqlite3
 import stat
 import time
@@ -319,7 +318,7 @@ def latest_request(session: Session) -> str:
 
 def _processes() -> dict[str, list[int]] | None:
     """Top-level opencode process IDs by working directory; None when ps/lsof cannot tell."""
-    lsof = shutil.which("lsof")
+    lsof = processes.lsof()
     listing = processes.run(["ps", "-axo", "pid=,ppid=,comm="])
     if not lsof or listing is None or listing[0] != 0:
         return None
