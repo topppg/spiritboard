@@ -79,6 +79,12 @@ Python 3.12+ is required; uv manages the isolated environment and installs the n
 dependencies. Pin a release with `uvx spiritboard@0.1.0`. Each release has a matching
 [GitHub tag and release](https://github.com/topppg/spiritboard/releases).
 
+For a permanent installation of a local checkout, run
+`uv tool install --force --managed-python --python 3.13 .` there,
+then launch `spiritboard`. Keep data and private config outside checkouts and worktrees;
+see the [checkout relocation guide](https://github.com/topppg/spiritboard/blob/main/docs/DISTRIBUTION.md#keep-a-local-build-independent-of-its-checkout)
+before moving an existing setup.
+
 ### GitHub development preview
 
 To try unreleased changes instead of the PyPI release:

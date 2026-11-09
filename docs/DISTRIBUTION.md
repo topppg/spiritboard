@@ -59,6 +59,38 @@ Existing installations keep their data: explicitly pass the former `--data-dir` 
 using it. No old folders are silently moved or deleted. Uninstalling the tool with
 `uv tool uninstall spiritboard` removes its environment, not your saved dashboard data.
 
+## Keep a local build independent of its checkout
+
+Use `uv run spiritboard` and the checkout's `.venv` for development. Moving or removing
+that checkout can break its environment. To keep the current local code installed, run
+this from the checkout:
+
+```bash
+uv tool install --force --managed-python --python 3.13 .
+spiritboard
+```
+
+This installs a noneditable copy in uv's tool environment with a uv-managed Python runtime,
+independent of the checkout and Homebrew's Python upgrades. Moving or deleting the checkout
+afterward does not remove the installed code. Rerun the install command to include later
+code changes, then restart the dashboard.
+
+Keep dashboard data in the default OS user-data directory, or choose a permanent
+`--data-dir` outside checkouts and worktrees. Put any `--config` and
+`--openrouter-key-file` files outside them too. A tool installation does not relocate
+these files or change paths saved in installed input hooks.
+
+To move existing dashboard state, stop its server and pause agents using installed input
+hooks before copying the entire data directory, including any SQLite sidecar files, to a
+private permanent location. Hooks can still write after the server stops; use SQLite's
+backup API for databases whose writers cannot be paused. Restart with the new `--data-dir`
+and updated config/key paths. Use absolute profile roots in a moved config. Rerun
+`inputs install` with the new data directory and usual source settings before resuming
+the agents. Saved provider connections use the data directory's identity, so reconnect
+them in the dashboard after moving it. If the Mac app remembers the old folder,
+choose the new one through **File › Choose Data Folder…** after its server is running.
+Keep the original data until the new dashboard has been verified.
+
 ## macOS app distribution
 
 The [macOS app guide](MAC_APP.md) covers the standalone window and Dock app. With the Apple
