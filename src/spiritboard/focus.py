@@ -28,6 +28,7 @@ _ID = r"[A-Za-z0-9][A-Za-z0-9-]{0,63}"
 ENV_KEYS = {
     "CMUX_WORKSPACE_ID": re.compile(_ID),
     "CMUX_PANEL_ID": re.compile(_ID),
+    "CMUX_SURFACE_ID": re.compile(_ID),
     "CMUX_SOCKET_PATH": re.compile(_PATH),
     "TMUX": re.compile(_PATH + r",\d{1,10},\d{1,10}"),
     "TMUX_PANE": re.compile(r"%\d{1,6}"),
@@ -253,7 +254,8 @@ def adapter(pid: int, chain: list[Process] | None = None) -> Target:
     tty = chain[0].tty if TTY.fullmatch(chain[0].tty) else ""
     activate = _activation(env, app) if mac else None
     tail = (activate[0],) if activate else ()
-    workspace, panel = env.get("CMUX_WORKSPACE_ID"), env.get("CMUX_PANEL_ID")
+    workspace = env.get("CMUX_WORKSPACE_ID")
+    panel = env.get("CMUX_SURFACE_ID") or env.get("CMUX_PANEL_ID")
     cli = _cmux_cli(app) if workspace and panel else None
     if workspace and panel and cli:
         steps = (

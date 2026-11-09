@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import stat
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -281,7 +280,7 @@ def live_sessions(root: Path) -> frozenset[str] | None:
             locks = [e.path for e in entries if LOCK_FILE.fullmatch(e.name) and not e.is_symlink()]
     except OSError:
         return None
-    lsof = shutil.which("lsof")
+    lsof = processes.lsof()
     if not locks:
         return frozenset()
     if not lsof:
@@ -327,7 +326,7 @@ def rollout_pid(root: Path, path: Path) -> tuple[bool, int | None]:
     """(known, pid) of the process holding a rollout transcript open."""
     if path.is_relative_to(root / "archived_sessions"):
         return True, None
-    lsof = shutil.which("lsof")
+    lsof = processes.lsof()
     if not lsof or not path.is_file():
         return False, None
     result = processes.run([lsof, "-t", "--", str(path)])

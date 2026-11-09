@@ -302,13 +302,13 @@ class OpencodeTests(unittest.TestCase):
             return (0, ps) if argv[0] == "ps" else (0, lsof)
 
         with (
-            patch.object(opencode.shutil, "which", return_value="/usr/sbin/lsof"),
+            patch.object(opencode.processes, "lsof", return_value="/usr/sbin/lsof"),
             patch.object(opencode.processes, "run", side_effect=run),
             patch.object(opencode.os.path, "realpath", side_effect=lambda p: p),
         ):
             self.assertEqual(opencode._processes(), {"/invented/bravo": [100]})
         self.assertEqual(calls[1][-1], "100")
-        with patch.object(opencode.shutil, "which", return_value=None):
+        with patch.object(opencode.processes, "lsof", return_value=None):
             self.assertIsNone(opencode._processes())
 
     def test_resume_command_and_focus_target_for_a_closed_session(self):

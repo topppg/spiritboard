@@ -360,10 +360,17 @@ look for the live process that owns it; SDK runs are never eligible.
   time and executable path (to find an enclosing `.app` bundle). The environment
   is read with `ps eww` after stripping the process arguments (or
   `/proc/<pid>/environ` on Linux), and only these
-  strictly validated keys are kept: `CMUX_WORKSPACE_ID`, `CMUX_PANEL_ID`,
+  strictly validated keys are kept: `CMUX_WORKSPACE_ID`, `CMUX_SURFACE_ID`, `CMUX_PANEL_ID`,
   `CMUX_SOCKET_PATH`, `TMUX`, `TMUX_PANE`, `TERM_PROGRAM`, `__CFBundleIdentifier`,
   `ITERM_SESSION_ID` and `WINDOWID`. Every other value is discarded, and none is
   returned to the browser or logged.
+
+On macOS, process checks also find the system `/usr/sbin/lsof` when a login service's
+`PATH` omits `/usr/sbin`. cmux navigation uses `CMUX_SURFACE_ID`, or its panel alias,
+to select the exact terminal. A cmux socket restricted to processes started inside
+cmux rejects a dashboard started at login. Configure cmux's password-protected socket
+mode to permit that setup; the bundled cmux CLI handles its own saved credential.
+Spiritboard does not read or store the cmux password.
 
 The browser receives only `available`, `kind` (`focus`, `resume` or
 `unsupported`), a display label and, for resume, the command text.

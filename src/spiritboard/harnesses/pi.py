@@ -6,7 +6,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import stat
 from collections.abc import Callable
 from pathlib import Path
@@ -273,7 +272,7 @@ def pi_processes() -> dict[int, str] | None:
             pids.append(int(pid))
     if not pids:
         return {}
-    lsof = shutil.which("lsof")
+    lsof = processes.lsof()
     if not lsof:
         return None
     result = processes.run([lsof, "-a", "-d", "cwd", "-F", "pn", "-p", ",".join(map(str, pids))])
