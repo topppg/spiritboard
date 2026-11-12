@@ -13,7 +13,7 @@ import json
 import os
 import re
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .harnesses import HARNESSES
@@ -94,8 +94,10 @@ def load_profiles(config_path: str | Path) -> list[SourceProfile]:
     """Read an explicit local config, either a profile list or {profiles: [...]}.
 
     Unknown fields fail rather than accidentally interpreting secret-bearing
-    tool configuration as dashboard configuration.
+    tool configuration as dashboard configuration. Relative storage roots are
+    resolved against the configuration file's directory.
     """
+    config_path = Path(config_path).expanduser().absolute()
     with os.fdopen(os.open(config_path, READ_FLAGS), "rb") as stream:
         if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
             raise ValueError("Source config must be a regular file")
@@ -112,10 +114,14 @@ def load_profiles(config_path: str | Path) -> list[SourceProfile]:
             raise ValueError("Each source profile must be an object")
         if set(entry) - {"id", "kind", "label", "root", "include_text"}:
             raise ValueError("Unknown source profile field")
-        result.append(SourceProfile(**entry))
+        profile = SourceProfile(**entry)
+        root = Path(profile.root).expanduser()
+        if not root.is_absolute():
+            root = config_path.parent / root
+        result.append(replace(profile, root=str(root.resolve())))
     if len({p.id for p in result}) != len(result):
         raise ValueError("Duplicate source profile ID")
-    if len({(p.kind, str(Path(p.root).expanduser().resolve())) for p in result}) != len(result):
+    if len({(p.kind, p.root) for p in result}) != len(result):
         raise ValueError("Duplicate source storage root")
     return result
 

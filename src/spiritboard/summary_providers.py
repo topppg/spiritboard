@@ -78,13 +78,14 @@ class SummaryProviders:
         self._enabled = False
         self._preference_error = False
         if not demo:
-            self._enabled = self._read_enabled() or enabled
+            saved = self._read_enabled()
+            self._enabled = enabled if saved is None else saved
 
-    def _read_enabled(self) -> bool:
+    def _read_enabled(self) -> bool | None:
         try:
             _private_directory(self._directory)
             if not self._preferences.exists() and not self._preferences.is_symlink():
-                return False
+                return None
             descriptor = _regular_descriptor(self._preferences)
             try:
                 raw = os.read(descriptor, 2049)

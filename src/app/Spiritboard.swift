@@ -1,6 +1,26 @@
 import AppKit
 import WebKit
 
+private final class HealthRedirects: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+private struct AppReadiness: Decodable {
+    let url: String
+    let instance_id: String
+}
+
+private struct DashboardHealth: Decodable {
+    let ok: Bool
+    let service: String
+    let instance_id: String
+}
+
 final class SpiritboardApp: NSObject, NSApplicationDelegate, NSMenuItemValidation,
     WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
     private static let dataDirectoryKey = "dataDirectory"
@@ -16,8 +36,26 @@ final class SpiritboardApp: NSObject, NSApplicationDelegate, NSMenuItemValidatio
     private var backend: Process?
     private var launch = 0
     private var origin: URL?
+    private var instanceID: UUID?
     private var output = Data()
     private var ready = false
+    private var quitting = false
+    private var failureShowing = false
+    private var retries = 0
+    private var healthySince: Date?
+    private var healthTimer: Timer?
+    private var startupTimer: Timer?
+    private var healthTask: URLSessionDataTask?
+    private var recovery: DispatchWorkItem?
+    private var dashboardNavigation: WKNavigation?
+    private let healthSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.timeoutIntervalForRequest = 2
+        configuration.timeoutIntervalForResource = 2
+        return URLSession(configuration: configuration, delegate: HealthRedirects(), delegateQueue: nil)
+    }()
     private var popupWindows = [ObjectIdentifier: NSWindow]()
 
     // A folder chosen by the user; nil means the normal default data directory.
@@ -104,6 +142,11 @@ final class SpiritboardApp: NSObject, NSApplicationDelegate, NSMenuItemValidatio
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        quitting = true
+        launch += 1
+        recovery?.cancel()
+        stopChecks()
+        healthSession.invalidateAndCancel()
         if let backend, backend.isRunning {
             backend.interrupt()
         }
@@ -198,7 +241,7 @@ final class SpiritboardApp: NSObject, NSApplicationDelegate, NSMenuItemValidatio
         // Custom --data-dir folders are often hidden, such as a project's .spiritboard.
         panel.showsHiddenFiles = true
         panel.prompt = "Show Dashboard"
-        panel.message = "Choose the --data-dir folder of a Spiritboard dashboard that is running."
+        panel.message = "Choose a Spiritboard data folder. Its saved settings are used to restart it."
         if let dataDirectory {
             panel.directoryURL = URL(fileURLWithPath: dataDirectory)
         }
@@ -221,15 +264,32 @@ final class SpiritboardApp: NSObject, NSApplicationDelegate, NSMenuItemValidatio
     }
 
     @objc private func reloadDashboard(_ sender: Any?) {
-        webView.reload()
+        dashboardNavigation = webView.reload()
     }
 
-    private func connect() {
+    private func stopChecks() {
+        healthTimer?.invalidate()
+        healthTimer = nil
+        startupTimer?.invalidate()
+        startupTimer = nil
+        healthTask?.cancel()
+        healthTask = nil
+    }
+
+    private func connect(resetRetries: Bool = true) {
+        guard !quitting else { return }
+        recovery?.cancel()
+        recovery = nil
+        stopChecks()
+        if resetRetries { retries = 0 }
         launch += 1
         let current = launch
         output = Data()
         ready = false
         origin = nil
+        instanceID = nil
+        healthySince = nil
+        dashboardNavigation = nil
         webView.stopLoading()
         webView.isHidden = true
         spinner.startAnimation(nil)
@@ -244,16 +304,28 @@ final class SpiritboardApp: NSObject, NSApplicationDelegate, NSMenuItemValidatio
         DispatchQueue.global().async {
             let deadline = Date().addingTimeInterval(5)
             while old.isRunning, Date() < deadline { usleep(50_000) }
-            if old.isRunning { old.terminate() }
-            old.waitUntilExit()
+            if old.isRunning {
+                old.terminate()
+                let terminationDeadline = Date().addingTimeInterval(3)
+                while old.isRunning, Date() < terminationDeadline { usleep(50_000) }
+            }
+            let stopped = !old.isRunning
             DispatchQueue.main.async { [weak self] in
-                guard let self, current == self.launch else { return }
+                guard let self, !self.quitting, current == self.launch else { return }
+                guard stopped else {
+                    self.showFailure(
+                        "The previous dashboard helper could not stop. "
+                            + "Stop that dashboard before trying again."
+                    )
+                    return
+                }
                 self.startBackend(current)
             }
         }
     }
 
     private func startBackend(_ current: Int) {
+        guard !quitting, current == launch else { return }
         let process = Process()
         process.executableURL = Bundle.main.bundleURL
             .appendingPathComponent("Contents/Helpers/spiritboard-backend")
@@ -274,17 +346,24 @@ final class SpiritboardApp: NSObject, NSApplicationDelegate, NSMenuItemValidatio
                 self.receive(chunk)
             }
         }
-        process.terminationHandler = { [weak self] _ in
+        process.terminationHandler = { [weak self] terminated in
+            let status = terminated.terminationStatus
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                guard let self, current == self.launch, !self.ready else { return }
-                self.showFailure()
+                guard let self, !self.quitting, current == self.launch else { return }
+                // Joining an existing server ends the helper normally; health checks watch it.
+                if self.ready && status == 0 { return }
+                self.recover(self.ready ? "The dashboard stopped unexpectedly." : nil)
             }
         }
         do {
             try process.run()
             backend = process
+            startupTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: false) { [weak self] _ in
+                guard let self, current == self.launch, !self.ready else { return }
+                self.recover("The dashboard did not finish starting.")
+            }
         } catch {
-            showFailure()
+            recover("The dashboard helper could not start.")
         }
     }
 
@@ -295,22 +374,103 @@ final class SpiritboardApp: NSObject, NSApplicationDelegate, NSMenuItemValidatio
         }
         guard !ready, let message = String(data: output, encoding: .utf8) else { return }
         for line in message.split(separator: "\n", omittingEmptySubsequences: false).dropLast() {
-            let prefixes = ["Spiritboard local dashboard: ", "Spiritboard is already running: "]
-            guard let prefix = prefixes.first(where: { line.hasPrefix($0) }) else { continue }
-            let address = String(line.dropFirst(prefix.count))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let prefix = "Spiritboard app ready: "
+            guard line.hasPrefix(prefix),
+                  let data = String(line.dropFirst(prefix.count)).data(using: .utf8),
+                  let payload = try? JSONDecoder().decode(AppReadiness.self, from: data) else { continue }
+            let address = payload.url
             guard let url = URL(string: address), url.scheme == "http",
-                  url.host == "127.0.0.1", url.port != nil,
-                  url.path.isEmpty || url.path == "/",
-                  url.query == nil, url.fragment == nil else { continue }
+                  url.host == "127.0.0.1", let port = url.port, (1...65535).contains(port),
+                  address == "http://127.0.0.1:\(port)" || address == "http://127.0.0.1:\(port)/",
+                  let identity = Self.identity(payload.instance_id) else { continue }
+            startupTimer?.invalidate()
+            startupTimer = nil
             ready = true
             origin = url
-            webView.load(URLRequest(url: url))
+            instanceID = identity
+            dashboardNavigation = webView.load(URLRequest(url: url))
+            let current = launch
+            healthTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+                self?.checkHealth(current)
+            }
+            checkHealth(current)
             return
         }
     }
 
+    private static func identity(_ value: String) -> UUID? {
+        var canonical = value
+        if value.range(of: "^[0-9A-Fa-f]{32}$", options: .regularExpression) != nil {
+            for offset in [20, 16, 12, 8] {
+                canonical.insert("-", at: canonical.index(canonical.startIndex, offsetBy: offset))
+            }
+        }
+        return UUID(uuidString: canonical)
+    }
+
+    private func checkHealth(_ current: Int) {
+        guard !quitting, current == launch, ready, healthTask == nil,
+              let origin, let instanceID else { return }
+        let url = origin.appendingPathComponent("api/health")
+        let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 2)
+        healthTask = healthSession.dataTask(with: request) { [weak self] data, response, error in
+            let response = response as? HTTPURLResponse
+            let payload = data.flatMap { bytes -> DashboardHealth? in
+                guard bytes.count <= 8192 else { return nil }
+                return try? JSONDecoder().decode(DashboardHealth.self, from: bytes)
+            }
+            let valid = error == nil && response?.statusCode == 200 && response?.url == url
+                && payload?.ok == true && payload?.service == "spiritboard"
+                && payload.flatMap { Self.identity($0.instance_id) } == instanceID
+            DispatchQueue.main.async {
+                guard let self, !self.quitting, current == self.launch, self.ready else { return }
+                self.healthTask = nil
+                guard valid else {
+                    self.recover("The dashboard stopped responding. Automatic recovery could not restore it.")
+                    return
+                }
+                if let since = self.healthySince {
+                    if Date().timeIntervalSince(since) >= 30 { self.retries = 0 }
+                } else {
+                    self.healthySince = Date()
+                }
+            }
+        }
+        healthTask?.resume()
+    }
+
+    private func recover(_ detail: String? = nil) {
+        guard !quitting, !failureShowing, recovery == nil else { return }
+        launch += 1
+        let current = launch
+        stopChecks()
+        ready = false
+        origin = nil
+        instanceID = nil
+        healthySince = nil
+        dashboardNavigation = nil
+        webView.stopLoading()
+        webView.isHidden = true
+        spinner.startAnimation(nil)
+        guard retries < 3 else {
+            showFailure(detail)
+            return
+        }
+        let delay = pow(2.0, Double(retries))
+        retries += 1
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.quitting, current == self.launch else { return }
+            self.recovery = nil
+            self.connect(resetRetries: false)
+        }
+        recovery = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
     private func showFailure(_ detail: String? = nil) {
+        guard !quitting, !failureShowing, window.attachedSheet == nil else { return }
+        failureShowing = true
+        stopChecks()
         spinner.stopAnimation(nil)
         webView.isHidden = true
         ready = false
@@ -328,7 +488,7 @@ final class SpiritboardApp: NSObject, NSApplicationDelegate, NSMenuItemValidatio
             alert.messageText = "Spiritboard can't show the dashboard for this data folder."
             alert.informativeText = [
                 reason, "Folder: \(folder)",
-                "Start it with spiritboard serve --data-dir and its usual options, then try again.",
+                "Check that the folder and its saved source settings are still available, then try again.",
             ].compactMap { $0 }.joined(separator: "\n\n")
             alert.addButton(withTitle: "Use Default Data Folder")
         } else {
@@ -337,7 +497,9 @@ final class SpiritboardApp: NSObject, NSApplicationDelegate, NSMenuItemValidatio
         }
         alert.addButton(withTitle: "Quit")
         alert.beginSheetModal(for: window) { [weak self] response in
-            guard let self, current == self.launch else { return }
+            guard let self else { return }
+            self.failureShowing = false
+            guard !self.quitting, current == self.launch else { return }
             switch response {
             case .alertFirstButtonReturn:
                 self.connect()
@@ -352,7 +514,8 @@ final class SpiritboardApp: NSObject, NSApplicationDelegate, NSMenuItemValidatio
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        guard webView === self.webView, ready, let origin, webView.url?.host == origin.host,
+        guard webView === self.webView, navigation === dashboardNavigation, ready,
+              let origin, webView.url?.host == origin.host,
               webView.url?.port == origin.port else { return }
         spinner.stopAnimation(nil)
         webView.isHidden = false
@@ -360,11 +523,18 @@ final class SpiritboardApp: NSObject, NSApplicationDelegate, NSMenuItemValidatio
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
                  withError error: Error) {
+        navigationFailed(webView, navigation, error)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        navigationFailed(webView, navigation, error)
+    }
+
+    private func navigationFailed(_ webView: WKWebView, _ navigation: WKNavigation?, _ error: Error) {
         // A replaced or cancelled load is not a dashboard failure.
-        guard webView === self.webView, ready,
+        guard webView === self.webView, navigation === dashboardNavigation, ready,
               (error as NSError).code != NSURLErrorCancelled else { return }
-        launch += 1
-        showFailure("The dashboard stopped responding.")
+        recover("The dashboard stopped responding. Automatic recovery could not restore it.")
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,

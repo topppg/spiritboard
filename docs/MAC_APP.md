@@ -11,9 +11,25 @@ A CLI dashboard started with a custom `--data-dir` keeps its own history. To sho
 choose **File › Choose Data Folder…** and pick that folder; hidden folders such as
 `.spiritboard` are listed. The app remembers the choice. It connects only after verifying the
 dashboard through the folder's private instance details, so another program listening on a local
-port cannot impersonate Spiritboard. If no dashboard is running for the chosen folder, the app
-says so and offers to try again, choose another folder, or use the default; it never starts a
-server there or shows other data instead. **File › Use Default Data Folder** returns to normal.
+port cannot impersonate Spiritboard. If the dashboard has stopped, the app starts its bundled
+server for that same folder using its private `startup.json`. Successful CLI launches save the
+configured profiles, discovery settings, summary opt-in, limits, and config/key-file paths there;
+credentials are never saved in this file. Existing summary preferences remain in the data folder;
+pausing summaries stays in effect after recovery. Relative profile roots resolve against the
+configuration file's directory.
+
+For a folder last used by an older version, start it once with the current CLI and its usual
+options, then reopen the app. This creates its saved startup settings. A missing or moved folder,
+missing config file, or unusable saved settings produces an explanation and a choice to retry or
+select the folder's current location. Recovery keeps the selected data folder and source settings;
+it never substitutes default profiles or another folder. **File › Use Default Data Folder**
+explicitly returns to normal.
+
+While its window is open, the app checks the server's private instance identity and automatically
+reconnects or restarts it after a crash or disconnection. Recovery makes up to three retries with
+increasing delays before showing an error. A successful connection restores the retry allowance
+after 30 seconds of healthy operation. Closing the app stops a server it started; a server it
+joined continues running.
 
 Dashboard dropdowns open as a compact Mac-style menu instead of WebKit's legacy popup. The
 dashboard ships this menu (`src/spiritboard/static/select-menu.js`) for every browser, and the app
@@ -26,7 +42,8 @@ The app bundles the dashboard code in this checkout when `src/app/build.sh` runs
 after changing the web dashboard to include those changes in its own server. If a dashboard is
 already running for the selected data folder, the app connects to it and shows that server's web
 UI; restart that server to load its updated code. Mac-specific controls are bundled
-with the app, so changes to them always need an app rebuild.
+with the app, so changes to them always need an app rebuild. Updating the Python package alone
+does not update an installed `Spiritboard.app`.
 
 ## Build
 

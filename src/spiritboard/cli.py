@@ -13,6 +13,7 @@ import secrets
 import sys
 import threading
 import webbrowser
+from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import asdict
 from pathlib import Path
@@ -23,6 +24,7 @@ from .input_events import InputSignals
 from .launcher import Instance, LaunchError, default_data_dir, running_url
 from .server import Collector
 from .sources import discover_profiles, load_profiles
+from .startup import save_startup
 from .store import Store, keep_pruned
 
 
@@ -81,7 +83,9 @@ def open_dashboard(url: str, *, enabled: bool) -> None:
         print("Browser unavailable; open the local dashboard URL above.", flush=True)
 
 
-def serve_dashboard(args: argparse.Namespace) -> int:
+def serve_dashboard(
+    args: argparse.Namespace, *, on_ready: Callable[[str, str], None] | None = None
+) -> int:
     profiles = load_profiles(args.config) if args.config else None
     profile_settings = (
         [{**asdict(p), "root": str(Path(p.root).expanduser().resolve())} for p in profiles]
@@ -114,6 +118,10 @@ def serve_dashboard(args: argparse.Namespace) -> int:
         if not instance.owner:
             # Port 0 asks for any free port, so it never pins the running board's port.
             url = instance.existing_url(port=args.port or None)
+            if on_ready is not None:
+                if instance.instance_id is None:
+                    raise LaunchError("The dashboard has no verified instance identity.")
+                on_ready(url, instance.instance_id)
             print(f"Spiritboard is already running: {url}", flush=True)
             open_dashboard(url, enabled=not args.no_open)
             return 0
@@ -159,6 +167,9 @@ def serve_dashboard(args: argparse.Namespace) -> int:
         ).start()
         resources.callback(server.shutdown)
         instance.publish(server.url, server.instance_id)
+        save_startup(args)
+        if on_ready is not None:
+            on_ready(server.url, server.instance_id)
         monitor = None
         if args.config or args.watch or (not args.no_discovery and not args.demo):
             from .monitor import Monitor
@@ -233,7 +244,9 @@ def serve_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(
+    argv: list[str] | None = None, *, on_ready: Callable[[str, str], None] | None = None
+) -> int:
     parser = argparse.ArgumentParser(
         prog="spiritboard",
         description="Local read-only agent dashboard. Run without a subcommand to start the board.",
@@ -277,7 +290,10 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument(
         "--summaries",
         action="store_true",
-        help="enable connected summaries; use an OpenRouter key from the environment if supplied",
+        help=(
+            "enable connected summaries on first start; saved dashboard preferences take "
+            "precedence; use an OpenRouter key from the environment if supplied"
+        ),
     )
     serve.add_argument(
         "--openrouter-key-file",
@@ -430,7 +446,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         if args.no_discovery and (args.config or args.watch):
             raise ValueError("conflicting discovery settings")
-        return serve_dashboard(args)
+        return serve_dashboard(args, on_ready=on_ready)
     except KeyboardInterrupt:
         return 0
     except LaunchError as error:
