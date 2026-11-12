@@ -71,7 +71,11 @@ def test_forged_health_on_standard_port_is_not_trusted(
         with pytest.raises(SystemExit) as exited:
             runpy.run_path(str(BACKEND), run_name="__main__")
     assert exited.value.code == 0
-    serve.assert_called_once_with(["serve", "--no-open", "--port", "0"])
+    assert serve.call_count == 1
+    assert serve.call_args.args == (
+        ["serve", "--no-open", "--port", "0", "--data-dir", str(launcher.default_data_dir())],
+    )
+    assert callable(serve.call_args.kwargs["on_ready"])
     assert "already running" not in capsys.readouterr().out
 
 
@@ -81,7 +85,10 @@ def test_selected_directory_shows_its_verified_dashboard(
     serve = MagicMock(return_value=0)
     with dashboard(tmp_path / "board") as url, patch.object(cli, "main", serve):
         assert backend.main(["--data-dir", str(tmp_path / "board")]) == 0
-    assert capsys.readouterr().out == f"Spiritboard is already running: {url}\n"
+    line = capsys.readouterr().out.removeprefix("Spiritboard app ready: ")
+    ready = json.loads(line)
+    assert ready["url"] == url
+    assert uuid.UUID(ready["instance_id"])
     serve.assert_not_called()
 
 
@@ -107,10 +114,85 @@ def test_selected_directory_without_dashboard_never_starts_another(
         assert backend.main(["--data-dir", str(tmp_path / "missing")]) == 1
     assert capsys.readouterr().out == (
         "Spiritboard could not connect: "
-        "No dashboard is running with this data directory. Start one first.\n"
+        "The selected data folder is missing. Choose its current location.\n"
     )
     serve.assert_not_called()
     assert not (tmp_path / "missing").exists()
+
+
+def test_stopped_selected_directory_restores_saved_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "board"
+    directory.mkdir(mode=0o700)
+    saved = directory / "startup.json"
+    saved.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "args": [
+                    "--no-discovery",
+                    "--port",
+                    "0",
+                    "--max-age-days",
+                    "0",
+                    "--demo-delay",
+                    "0.5",
+                    "--stale-after",
+                    "15",
+                    "--limit-per-profile",
+                    "5000",
+                    "--retention-days",
+                    "30",
+                ],
+                "env": {"CODEX_HOME": "/invented/codex"},
+            }
+        )
+    )
+    saved.chmod(0o600)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/invented/unrelated")
+    observed: list[tuple[str | None, str | None]] = []
+
+    def serve(arguments: list[str], **_kwargs: object) -> int:
+        import os
+
+        observed.append((os.environ.get("CODEX_HOME"), os.environ.get("CLAUDE_CONFIG_DIR")))
+        assert arguments == [
+            "serve",
+            "--no-discovery",
+            "--port",
+            "0",
+            "--max-age-days",
+            "0",
+            "--demo-delay",
+            "0.5",
+            "--stale-after",
+            "15",
+            "--limit-per-profile",
+            "5000",
+            "--retention-days",
+            "30",
+            "--data-dir",
+            str(directory),
+            "--no-open",
+        ]
+        return 0
+
+    with patch.object(cli, "main", side_effect=serve) as start:
+        assert backend.main(["--data-dir", str(directory)]) == 0
+    start.assert_called_once()
+    assert observed == [("/invented/codex", None)]
+
+
+def test_existing_selected_folder_without_startup_requires_configuration(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    directory = tmp_path / "board"
+    directory.mkdir(mode=0o700)
+    with patch.object(cli, "main") as start:
+        assert backend.main(["--data-dir", str(directory)]) == 1
+    assert "saved startup" in capsys.readouterr().out.lower()
+    start.assert_not_called()
 
 
 def test_default_directory_reuses_its_verified_dashboard(
@@ -123,7 +205,10 @@ def test_default_directory_reuses_its_verified_dashboard(
         patch.object(cli, "main", serve),
     ):
         assert backend.main([]) == 0
-    assert capsys.readouterr().out == f"Spiritboard is already running: {url}\n"
+    line = capsys.readouterr().out.removeprefix("Spiritboard app ready: ")
+    ready = json.loads(line)
+    assert ready["url"] == url
+    assert uuid.UUID(ready["instance_id"])
     serve.assert_not_called()
 
 

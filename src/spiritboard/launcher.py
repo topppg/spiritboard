@@ -242,6 +242,11 @@ class Instance:
         except (ValueError, TypeError, UnicodeError):
             raise LaunchError("The running dashboard has invalid connection details.") from None
 
+    @property
+    def instance_id(self) -> str | None:
+        """Identity published by this owner or verified for the existing dashboard."""
+        return self._instance_id
+
     def publish(self, url: str, instance_id: str) -> None:
         """Publish connection details only after the local server has bound its port."""
         if not self.owner or self._descriptor is None:
@@ -313,6 +318,7 @@ class Instance:
                         "A dashboard already uses this data directory with different options. "
                         "Use its existing options, stop it first, or choose another --data-dir."
                     )
+                self._instance_id = instance_id
                 return url
             time.sleep(min(_POLL_INTERVAL, max(0, deadline - time.monotonic())))
         raise LaunchError(

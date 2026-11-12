@@ -79,6 +79,11 @@ Archived sessions (`time_archived` set) are never observed and are counted as
 Keep real configuration in the ignored local state directory. Do not publish
 personal storage paths or screenshots of private sessions.
 
+Profile `root` values expand `~`. Relative roots resolve against the directory containing
+the configuration file, so launching the app from Finder uses the same sources. Older
+configs that relied on the terminal's working directory should use absolute roots or
+adjust their paths to be relative to the config file.
+
 ## Honest status
 
 Native sources are **observed transcripts**, not SDK producers. Their status is

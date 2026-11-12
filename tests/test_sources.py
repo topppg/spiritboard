@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import chdir
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -1044,6 +1045,39 @@ class SourcesTests(unittest.TestCase):
             )
         )
         with self.assertRaises(ValueError):
+            load_profiles(path)
+
+    def test_config_relative_roots_scan_the_same_source_from_other_directories(self) -> None:
+        profile = self.profile(name="relative")
+        self.log(profile, "run.jsonl", self.codex("configured"))
+        config_directory = self.root / "settings"
+        config_directory.mkdir()
+        path = config_directory / "profiles.json"
+        path.write_text(
+            json.dumps(
+                [{"id": "relative", "kind": "codex", "root": "../relative", "label": "Test"}]
+            )
+        )
+        for directory in (config_directory, self.root):
+            with self.subTest(directory=directory.name), chdir(directory):
+                loaded = load_profiles(path)[0]
+                self.assertEqual(loaded.root, str(Path(profile.root).resolve()))
+                self.assertEqual({row["native_id"] for row in scan_profile(loaded)}, {"configured"})
+
+    def test_config_rejects_relative_and_absolute_aliases_of_the_same_root(self) -> None:
+        profile = self.profile(name="relative")
+        config_directory = self.root / "settings"
+        config_directory.mkdir()
+        path = config_directory / "profiles.json"
+        path.write_text(
+            json.dumps(
+                [
+                    {"id": "one", "kind": "codex", "root": "../relative", "label": "One"},
+                    {"id": "two", "kind": "codex", "root": profile.root, "label": "Two"},
+                ]
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "Duplicate source storage root"):
             load_profiles(path)
 
     def test_cached_observation_uses_current_profile_label(self):
